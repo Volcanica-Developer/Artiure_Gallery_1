@@ -1,0 +1,68 @@
+{
+  "artworks": [
+    {
+      "title": "Sunset Over Mountains",
+      "artist": "John Artist",
+      "description": "A breathtaking view of mountains during sunset, capturing the warm colors of the evening sky.",
+      "year": 2023,
+      "medium": "Digital Painting",
+      "category": "Landscape",
+      "imagePath": "Artworks/sunset_mountains",
+      "url": ""
+    },
+    {
+      "title": "Abstract Composition #5",
+      "artist": "Jane Painter",
+      "description": "An exploration of color and form, this abstract piece invites viewers to find their own meaning.",
+      "year": 2024,
+      "medium": "Acrylic on Canvas",
+      "category": "Abstract",
+      "imagePath": "Artworks/abstract_5",
+      "url": ""
+    },
+    {
+      "title": "Urban Life",
+      "artist": "City Sketcher",
+      "description": "A vibrant depiction of city life, showing the energy and movement of urban environments.",
+      "year": 2023,
+      "medium": "Watercolor",
+      "category": "Urban",
+      "imagePath": "Artworks/urban_life",
+      "url": ""
+    },
+    {
+      "title": "Portrait of Silence",
+      "artist": "Portrait Master",
+      "description": "A contemplative portrait that captures a moment of quiet reflection.",
+      "year": 2024,
+      "medium": "Oil on Canvas",
+      "category": "Portrait",
+      "imagePath": "Artworks/portrait_silence",
+      "url": ""
+    },
+    {
+      "title": "Ocean Waves",
+      "artist": "Nature Artist",
+      "description": "The power and beauty of ocean waves crashing against the shore.",
+      "year": 2023,
+      "medium": "Digital Art",
+      "category": "Nature",
+      "imagePath": "Artworks/ocean_waves",
+      "url": ""
+    },
+    {
+      "title": "Geometric Harmony",
+      "artist": "Shape Designer",
+      "description": "A study in geometric shapes and their harmonious relationships.",
+      "year": 2024,
+      "medium": "Vector Art",
+      "category": "Geometric",
+      "imagePath": "Artworks/geometric_harmony",
+      "url": ""
+    }
+  ]
+}
+
+
+
+
