@@ -1,6 +1,9 @@
 using UnityEngine;
+using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
+using UnityEngine.Networking;
+using Newtonsoft.Json;
 
 /// <summary>
 /// Manages all artworks in the gallery.
@@ -11,6 +14,17 @@ public class ArtworkManager : MonoBehaviour
     [Header("Artwork Configuration")]
     [SerializeField] private List<ArtworkData> artworkDatabase = new List<ArtworkData>();
     [SerializeField] private string jsonConfigPath = "ArtworkConfig.json";
+    [SerializeField] private bool useProductsJSON = true; // Toggle to use products.json instead of ArtworkConfig.json
+    [SerializeField] private string productsJsonPath = "products.json"; // Path to products.json in Resources folder
+    
+    [Header("API Configuration")]
+    [SerializeField] private bool useAPI = false; // Toggle to use API instead of JSON
+    [SerializeField] private string apiUrl = "https://api.example.com/artworks"; // API endpoint URL
+    [SerializeField] private float apiTimeout = 10f; // Timeout in seconds
+    [SerializeField] private bool loadImagesFromAPI = true; // Whether to download images from API URLs
+    // Note: Custom headers should be added programmatically using AddAPIHeader() method
+    // Dictionary is not serializable in Unity Inspector
+    private Dictionary<string, string> apiHeaders = new Dictionary<string, string>(); // Custom headers for API requests
     
     [Header("Prefabs")]
     [SerializeField] private GameObject artworkFramePrefab;
@@ -29,6 +43,7 @@ public class ArtworkManager : MonoBehaviour
     
     private List<ArtworkFrame> placedFrames = new List<ArtworkFrame>();
     private Camera playerCamera;
+    private bool isLoadingFromAPI = false;
     
     private void Awake()
     {
@@ -38,15 +53,61 @@ public class ArtworkManager : MonoBehaviour
             playerCamera = FindObjectOfType<Camera>();
         }
         
-        // Try to load from JSON if database is empty
+        // Try to load artworks if database is empty
         if (artworkDatabase.Count == 0)
         {
-            LoadArtworksFromJSON();
+            if (useAPI)
+            {
+                StartCoroutine(LoadArtworksFromAPI());
+            }
+            else if (useProductsJSON)
+            {
+                StartCoroutine(LoadArtworksFromProductsJSON());
+            }
+            else
+            {
+                LoadArtworksFromJSON();
+            }
         }
     }
     
     private void Start()
     {
+        // If loading from API, wait for it to complete before placing
+        if (isLoadingFromAPI)
+        {
+            StartCoroutine(WaitForAPILoadAndPlace());
+        }
+        else
+        {
+            // Auto-place artworks if enabled
+            if (autoPlaceOnStart && artworkDatabase.Count > 0)
+            {
+                if (useCustomTransforms && placementTransforms != null && placementTransforms.Count > 0)
+                {
+                    PlaceArtworksAtTransforms();
+                }
+                else
+                {
+                    AutoPlaceArtworksOnWalls();
+                }
+            }
+            
+            // Setup interaction for all frames
+            SetupArtworkInteractions();
+        }
+    }
+    
+    /// <summary>
+    /// Waits for API loading to complete before placing artworks.
+    /// </summary>
+    private IEnumerator WaitForAPILoadAndPlace()
+    {
+        while (isLoadingFromAPI)
+        {
+            yield return null;
+        }
+        
         // Auto-place artworks if enabled
         if (autoPlaceOnStart && artworkDatabase.Count > 0)
         {
@@ -90,6 +151,12 @@ public class ArtworkManager : MonoBehaviour
         {
             frame.SetArtwork(artwork);
             placedFrames.Add(frame);
+            
+            // Set up interaction immediately
+            frame.OnArtworkClicked -= HandleArtworkClicked;
+            frame.OnArtworkHovered -= HandleArtworkHovered;
+            frame.OnArtworkClicked += HandleArtworkClicked;
+            frame.OnArtworkHovered += HandleArtworkHovered;
         }
         
         return frame;
@@ -148,6 +215,12 @@ public class ArtworkManager : MonoBehaviour
         {
             frame.SetArtwork(artwork);
             placedFrames.Add(frame);
+            
+            // Set up interaction immediately
+            frame.OnArtworkClicked -= HandleArtworkClicked;
+            frame.OnArtworkHovered -= HandleArtworkHovered;
+            frame.OnArtworkClicked += HandleArtworkClicked;
+            frame.OnArtworkHovered += HandleArtworkHovered;
         }
         
         return frame;
@@ -190,6 +263,7 @@ public class ArtworkManager : MonoBehaviour
     
     /// <summary>
     /// Places artworks sequentially at the provided placement transforms.
+    /// Limits placement to the number of available placement points (ignores extra artworks).
     /// </summary>
     public void PlaceArtworksAtTransforms()
     {
@@ -208,11 +282,21 @@ public class ArtworkManager : MonoBehaviour
             return;
         }
         
-        Debug.Log($"ArtworkManager: Placing {artworkDatabase.Count} artworks at {placementTransforms.Count} transforms...");
+        // Limit artworks to available placement points
+        int artworksToPlace = Mathf.Min(artworkDatabase.Count, placementTransforms.Count);
+        
+        if (artworkDatabase.Count > placementTransforms.Count)
+        {
+            Debug.Log($"ArtworkManager: {artworkDatabase.Count} artworks available, but only {placementTransforms.Count} placement points. Placing first {artworksToPlace} artworks.");
+        }
+        else
+        {
+            Debug.Log($"ArtworkManager: Placing {artworksToPlace} artworks at {placementTransforms.Count} transforms...");
+        }
         
         int placedCount = 0;
         
-        for (int i = 0; i < artworkDatabase.Count; i++)
+        for (int i = 0; i < artworksToPlace; i++)
         {
             ArtworkData artwork = artworkDatabase[i];
             if (artwork == null)
@@ -221,12 +305,11 @@ public class ArtworkManager : MonoBehaviour
                 continue;
             }
             
-            // Get the corresponding transform (cycle through if more artworks than transforms)
-            Transform placementTransform = placementTransforms[i % placementTransforms.Count];
+            Transform placementTransform = placementTransforms[i];
             
             if (placementTransform == null)
             {
-                Debug.LogWarning($"ArtworkManager: Placement transform at index {i % placementTransforms.Count} is null. Skipping artwork '{artwork.title}'.");
+                Debug.LogWarning($"ArtworkManager: Placement transform at index {i} is null. Skipping artwork '{artwork.title}'.");
                 continue;
             }
             
@@ -238,7 +321,7 @@ public class ArtworkManager : MonoBehaviour
             }
         }
         
-        Debug.Log($"ArtworkManager: Successfully placed {placedCount} out of {artworkDatabase.Count} artworks at transforms.");
+        Debug.Log($"ArtworkManager: Successfully placed {placedCount} out of {artworksToPlace} artworks at transforms.");
         
         // Setup interactions for newly placed frames
         SetupArtworkInteractions();
@@ -322,30 +405,38 @@ public class ArtworkManager : MonoBehaviour
         {
             if (frame != null)
             {
+                // Remove existing handlers first to avoid duplicates
+                frame.OnArtworkClicked -= HandleArtworkClicked;
+                frame.OnArtworkHovered -= HandleArtworkHovered;
+                
+                // Add handlers
                 frame.OnArtworkClicked += HandleArtworkClicked;
                 frame.OnArtworkHovered += HandleArtworkHovered;
             }
         }
+        
+        Debug.Log($"ArtworkManager: Set up interactions for {placedFrames.Count} artwork frames.");
     }
     
     private void HandleArtworkClicked(ArtworkData artwork)
     {
+        Debug.Log($"ArtworkManager: HandleArtworkClicked called for artwork: {artwork?.title ?? "NULL"}");
+        
         if (artwork == null)
         {
             Debug.LogWarning("ArtworkManager: Received click event with null artwork data.");
             return;
         }
         
-        if (artworkUI != null)
+        if (artworkUI == null)
         {
-            Debug.Log($"ArtworkManager: Showing artwork '{artwork.title}' in UI.");
-            artworkUI.ShowArtwork(artwork);
+            Debug.LogError($"ArtworkManager: ArtworkUI reference is not assigned! Clicked artwork: {artwork.title} by {artwork.artist}");
+            Debug.LogError($"ArtworkManager: Please assign the ArtworkUI component to ArtworkManager in the Inspector.");
+            return;
         }
-        else
-        {
-            Debug.LogWarning($"ArtworkManager: ArtworkUI reference is not assigned! Clicked artwork: {artwork.title} by {artwork.artist}");
-            Debug.LogWarning($"ArtworkManager: Please assign the ArtworkUI component to ArtworkManager in the Inspector.");
-        }
+        
+        Debug.Log($"ArtworkManager: Showing artwork '{artwork.title}' in UI.");
+        artworkUI.ShowArtwork(artwork);
     }
     
     private void HandleArtworkHovered(ArtworkData artwork)
@@ -393,6 +484,340 @@ public class ArtworkManager : MonoBehaviour
                 
                 artworkDatabase.Add(data);
             }
+        }
+    }
+    
+    /// <summary>
+    /// Loads artwork data from products.json file.
+    /// This is a coroutine that handles async image loading from URLs.
+    /// </summary>
+    private IEnumerator LoadArtworksFromProductsJSON()
+    {
+        isLoadingFromAPI = true; // Reuse this flag to indicate async loading
+        
+        // Load JSON file from Resources
+        TextAsset jsonFile = Resources.Load<TextAsset>(productsJsonPath.Replace(".json", ""));
+        if (jsonFile == null)
+        {
+            Debug.LogError($"ArtworkManager: Could not load products JSON from {productsJsonPath}. Make sure the file is in a Resources folder.");
+            isLoadingFromAPI = false;
+            yield break;
+        }
+        
+        Debug.Log($"ArtworkManager: Loading artworks from products.json...");
+        
+        // Parse JSON using Newtonsoft.Json (try-catch only for parsing, not for yield operations)
+        List<ProductData> products = null;
+        try
+        {
+            products = JsonConvert.DeserializeObject<List<ProductData>>(jsonFile.text);
+        }
+        catch (System.Exception e)
+        {
+            Debug.LogError($"ArtworkManager: Error parsing products.json: {e.Message}\n{e.StackTrace}");
+            isLoadingFromAPI = false;
+            yield break;
+        }
+        
+        if (products == null || products.Count == 0)
+        {
+            Debug.LogWarning("ArtworkManager: No products found in products.json or JSON parsing failed.");
+            isLoadingFromAPI = false;
+            yield break;
+        }
+        
+        Debug.Log($"ArtworkManager: Found {products.Count} products in JSON. Converting to artworks...");
+        
+        // Limit to available placement points if using custom transforms
+        int maxArtworks = products.Count;
+        if (useCustomTransforms && placementTransforms != null && placementTransforms.Count > 0)
+        {
+            maxArtworks = Mathf.Min(products.Count, placementTransforms.Count);
+            if (products.Count > placementTransforms.Count)
+            {
+                Debug.Log($"ArtworkManager: Limiting to {maxArtworks} artworks (matching {placementTransforms.Count} placement points).");
+            }
+        }
+        
+        int processedCount = 0;
+        
+        foreach (ProductData product in products)
+        {
+            if (processedCount >= maxArtworks)
+            {
+                break; // Stop if we've reached the limit
+            }
+            
+            if (product == null || product.mainImage == null || string.IsNullOrEmpty(product.mainImage.src))
+            {
+                Debug.LogWarning($"ArtworkManager: Skipping product with missing image data: {product?.name ?? "Unknown"}");
+                continue;
+            }
+            
+            // Create ArtworkData from ProductData
+            ArtworkData data = ScriptableObject.CreateInstance<ArtworkData>();
+            data.title = product.name ?? "Untitled";
+            data.artist = "Artwork"; // Products don't have artist field, using default
+            data.description = product.description ?? product.shortDescription ?? "No description available.";
+            data.year = 2024; // Default year since products don't have year
+            data.medium = product.medium ?? "Digital";
+            data.category = product.category ?? "General";
+            data.url = product.slug ?? ""; // Using slug as URL
+            
+            // Load image from URL (yield return must be outside try-catch)
+            yield return StartCoroutine(LoadImageFromURL(product.mainImage.src, data));
+            
+            artworkDatabase.Add(data);
+            processedCount++;
+            
+            // Log progress every 10 items
+            if (processedCount % 10 == 0)
+            {
+                Debug.Log($"ArtworkManager: Processed {processedCount}/{maxArtworks} artworks...");
+            }
+        }
+        
+        Debug.Log($"ArtworkManager: Successfully loaded {artworkDatabase.Count} artworks from products.json.");
+        isLoadingFromAPI = false;
+    }
+    
+    /// <summary>
+    /// Loads artwork data from an API endpoint.
+    /// This is a coroutine that handles async API calls.
+    /// </summary>
+    private IEnumerator LoadArtworksFromAPI()
+    {
+        isLoadingFromAPI = true;
+        
+        if (string.IsNullOrEmpty(apiUrl))
+        {
+            Debug.LogError("ArtworkManager: API URL is not set. Cannot load artworks from API.");
+            isLoadingFromAPI = false;
+            yield break;
+        }
+        
+        Debug.Log($"ArtworkManager: Loading artworks from API: {apiUrl}");
+        
+        // Create UnityWebRequest for API call
+        UnityWebRequest request = UnityWebRequest.Get(apiUrl);
+        
+        // Add custom headers if any
+        if (apiHeaders != null && apiHeaders.Count > 0)
+        {
+            foreach (var header in apiHeaders)
+            {
+                request.SetRequestHeader(header.Key, header.Value);
+            }
+        }
+        
+        // Set timeout
+        request.timeout = (int)apiTimeout;
+        
+        // Send request
+        yield return request.SendWebRequest();
+        
+        // Check for errors
+        if (request.result != UnityWebRequest.Result.Success)
+        {
+            Debug.LogError($"ArtworkManager: API request failed: {request.error}");
+            isLoadingFromAPI = false;
+            yield break;
+        }
+        
+        // Parse JSON response
+        string jsonResponse = request.downloadHandler.text;
+        Debug.Log($"ArtworkManager: Received API response: {jsonResponse.Substring(0, Mathf.Min(200, jsonResponse.Length))}...");
+        
+        // Try to parse as ArtworkConfig (same structure as JSON file)
+        // If your API returns a different structure, you'll need to adjust this
+        ArtworkConfig config = JsonUtility.FromJson<ArtworkConfig>(jsonResponse);
+        
+        if (config != null && config.artworks != null)
+        {
+            Debug.Log($"ArtworkManager: Parsed {config.artworks.Length} artworks from API.");
+            
+            foreach (ArtworkConfigEntry entry in config.artworks)
+            {
+                // Create ScriptableObject data from API entry
+                ArtworkData data = ScriptableObject.CreateInstance<ArtworkData>();
+                data.title = entry.title ?? "Untitled";
+                data.artist = entry.artist ?? "Unknown Artist";
+                data.description = entry.description ?? "No description available.";
+                data.year = entry.year;
+                data.medium = entry.medium ?? "Unknown";
+                data.category = entry.category ?? "General";
+                data.url = entry.url ?? "";
+                
+                // Load image from API URL if provided and enabled
+                if (loadImagesFromAPI && !string.IsNullOrEmpty(entry.imagePath))
+                {
+                    yield return StartCoroutine(LoadImageFromURL(entry.imagePath, data));
+                }
+                // Fallback: Try to load from Resources if imagePath is a local path
+                else if (!string.IsNullOrEmpty(entry.imagePath))
+                {
+                    Texture2D texture = Resources.Load<Texture2D>(entry.imagePath);
+                    if (texture != null)
+                    {
+                        data.image = texture;
+                    }
+                }
+                
+                artworkDatabase.Add(data);
+            }
+            
+            Debug.Log($"ArtworkManager: Successfully loaded {artworkDatabase.Count} artworks from API.");
+        }
+        else
+        {
+            // If the API structure is different, try alternative parsing
+            // You can uncomment and modify this section based on your actual API response structure
+            /*
+            // Example: If API returns a different structure, parse it here
+            // ArtworkApiResponse apiResponse = JsonUtility.FromJson<ArtworkApiResponse>(jsonResponse);
+            // Then convert apiResponse to ArtworkData objects
+            */
+            
+            Debug.LogWarning("ArtworkManager: Could not parse API response as ArtworkConfig. " +
+                           "The API response structure may be different. " +
+                           "Check the API response format and update the parsing logic.");
+        }
+        
+        request.Dispose();
+        isLoadingFromAPI = false;
+    }
+    
+    /// <summary>
+    /// Flips a texture vertically to fix upside-down images loaded from URLs.
+    /// </summary>
+    private Texture2D FlipTextureVertically(Texture2D original)
+    {
+        if (original == null) return null;
+        
+        int width = original.width;
+        int height = original.height;
+        
+        // Create a new texture with the same format
+        Texture2D flipped = new Texture2D(width, height, original.format, false);
+        
+        // Read all pixels from original texture
+        Color[] pixels = original.GetPixels();
+        Color[] flippedPixels = new Color[pixels.Length];
+        
+        // Flip pixels vertically
+        for (int y = 0; y < height; y++)
+        {
+            for (int x = 0; x < width; x++)
+            {
+                int originalIndex = y * width + x;
+                int flippedIndex = (height - 1 - y) * width + x;
+                flippedPixels[flippedIndex] = pixels[originalIndex];
+            }
+        }
+        
+        // Apply flipped pixels to new texture
+        flipped.SetPixels(flippedPixels);
+        flipped.Apply();
+        
+        return flipped;
+    }
+    
+    /// <summary>
+    /// Loads an image texture from a URL and assigns it to the artwork data.
+    /// </summary>
+    private IEnumerator LoadImageFromURL(string imageUrl, ArtworkData artworkData)
+    {
+        if (string.IsNullOrEmpty(imageUrl))
+        {
+            yield break;
+        }
+        
+        // Check if URL is valid
+        if (!imageUrl.StartsWith("http://") && !imageUrl.StartsWith("https://"))
+        {
+            // Not a valid URL, try loading from Resources instead
+            Texture2D texture = Resources.Load<Texture2D>(imageUrl);
+            if (texture != null)
+            {
+                artworkData.image = texture;
+            }
+            yield break;
+        }
+        
+        Debug.Log($"ArtworkManager: Loading image from URL: {imageUrl}");
+        
+        UnityWebRequest imageRequest = UnityWebRequestTexture.GetTexture(imageUrl);
+        imageRequest.timeout = (int)apiTimeout;
+        
+        yield return imageRequest.SendWebRequest();
+        
+        if (imageRequest.result == UnityWebRequest.Result.Success)
+        {
+            Texture2D texture = DownloadHandlerTexture.GetContent(imageRequest);
+            if (texture != null)
+            {
+                // Flip texture vertically to fix upside-down issue
+                texture = FlipTextureVertically(texture);
+                artworkData.image = texture;
+                Debug.Log($"ArtworkManager: Successfully loaded image for '{artworkData.title}'");
+            }
+        }
+        else
+        {
+            Debug.LogWarning($"ArtworkManager: Failed to load image from URL: {imageUrl}. Error: {imageRequest.error}");
+        }
+        
+        imageRequest.Dispose();
+    }
+    
+    /// <summary>
+    /// Manually triggers loading artworks from API.
+    /// Useful for refreshing data or loading on demand.
+    /// </summary>
+    public void ReloadArtworksFromAPI()
+    {
+        if (isLoadingFromAPI)
+        {
+            Debug.LogWarning("ArtworkManager: Already loading from API. Please wait.");
+            return;
+        }
+        
+        artworkDatabase.Clear();
+        StartCoroutine(LoadArtworksFromAPI());
+    }
+    
+    /// <summary>
+    /// Sets the API URL and optionally reloads artworks.
+    /// </summary>
+    public void SetAPIUrl(string url, bool reloadImmediately = false)
+    {
+        apiUrl = url;
+        if (reloadImmediately)
+        {
+            ReloadArtworksFromAPI();
+        }
+    }
+    
+    /// <summary>
+    /// Adds a custom header to API requests.
+    /// </summary>
+    public void AddAPIHeader(string key, string value)
+    {
+        if (apiHeaders == null)
+        {
+            apiHeaders = new Dictionary<string, string>();
+        }
+        apiHeaders[key] = value;
+    }
+    
+    /// <summary>
+    /// Removes a custom header from API requests.
+    /// </summary>
+    public void RemoveAPIHeader(string key)
+    {
+        if (apiHeaders != null)
+        {
+            apiHeaders.Remove(key);
         }
     }
     
