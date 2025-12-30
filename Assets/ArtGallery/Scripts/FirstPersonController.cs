@@ -20,7 +20,8 @@ public class FirstPersonController : MonoBehaviour
     [SerializeField] private float mouseSensitivity = 2f;
     [SerializeField] private float verticalLookLimit = 80f;
     [SerializeField] private bool invertY = false;
-    
+    [SerializeField] private bool invertRotation = false;
+
     [Header("Touch Settings")]
     [SerializeField] private float touchSensitivity = 0.5f;
     
@@ -155,7 +156,7 @@ public class FirstPersonController : MonoBehaviour
         if (lookInput.sqrMagnitude < 0.01f) return;
         
         // Horizontal rotation (Y-axis)
-        transform.Rotate(Vector3.up * lookInput.x * mouseSensitivity);
+        transform.Rotate(Vector3.up * lookInput.x * mouseSensitivity * (invertRotation ? 1f : -1f));
         
         // Vertical rotation (X-axis) - clamped
         float yRotation = lookInput.y * mouseSensitivity * (invertY ? 1f : -1f);
