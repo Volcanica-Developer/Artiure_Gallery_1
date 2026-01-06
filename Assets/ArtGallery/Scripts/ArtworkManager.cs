@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Linq;
 using UnityEngine.Networking;
 using Newtonsoft.Json;
+using Utilities;
 
 /// <summary>
 /// Manages all artworks in the gallery.
@@ -25,6 +26,10 @@ public class ArtworkManager : MonoBehaviour
     // Note: Custom headers should be added programmatically using AddAPIHeader() method
     // Dictionary is not serializable in Unity Inspector
     private Dictionary<string, string> apiHeaders = new Dictionary<string, string>(); // Custom headers for API requests
+
+    [Header("Size Settings (Optional)")]
+    [SerializeField] private bool useParsedAvailableSizeForPreferredSize = false;
+    [SerializeField] private bool useLargestParsedSize = true; // If false, use last size in the list
     
     [Header("Prefabs")]
     [SerializeField] private GameObject artworkFramePrefab;
@@ -527,6 +532,12 @@ public class ArtworkManager : MonoBehaviour
         }
         
         Debug.Log($"ArtworkManager: Found {products.Count} products in JSON. Converting to artworks...");
+
+        // Parse availableSizes strings into numeric values for each product
+        foreach (var p in products)
+        {
+            p?.ParseAvailableSizes();
+        }
         
         // Limit to available placement points if using custom transforms
         int maxArtworks = products.Count;
@@ -563,6 +574,47 @@ public class ArtworkManager : MonoBehaviour
             data.medium = product.medium ?? "Digital";
             data.category = product.category ?? "General";
             data.url = product.slug ?? ""; // Using slug as URL
+
+            // Optionally use parsed available sizes to drive the preferred display size
+            if (useParsedAvailableSizeForPreferredSize &&
+                product.parsedAvailableSizes != null &&
+                product.parsedAvailableSizes.Count > 0)
+            {
+                ProductSize chosenSize = null;
+
+                if (useLargestParsedSize)
+                {
+                    // Pick the size with the largest area
+                    chosenSize = product.parsedAvailableSizes[0];
+                    float largestArea = chosenSize.width * chosenSize.height;
+
+                    for (int i = 1; i < product.parsedAvailableSizes.Count; i++)
+                    {
+                        var size = product.parsedAvailableSizes[i];
+                        float area = size.width * size.height;
+                        if (area > largestArea)
+                        {
+                            chosenSize = size;
+                            largestArea = area;
+                        }
+                    }
+                }
+                else
+                {
+                    // Fallback: just use the last size in the list
+                    chosenSize = product.parsedAvailableSizes[product.parsedAvailableSizes.Count - 1];
+                }
+
+                if (chosenSize != null)
+                {
+                    // Sizes from parsedAvailableSizes are in inches; convert to Unity units (meters)
+                    float widthUnits = chosenSize.width.FromInches();
+                    float heightUnits = chosenSize.height.FromInches();
+
+                    // ArtworkFrame will still respect maintainAspectRatio when scaling the plane.
+                    data.preferredSize = new Vector2(widthUnits, heightUnits);
+                }
+            }
             
             // Load image from URL (yield return must be outside try-catch)
             yield return StartCoroutine(LoadImageFromURL(product.mainImage.src, data));
