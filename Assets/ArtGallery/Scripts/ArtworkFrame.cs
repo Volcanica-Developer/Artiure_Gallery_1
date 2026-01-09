@@ -1,4 +1,5 @@
 using UnityEngine;
+using Utilities;
 using UnityEngine.EventSystems;
 
 /// <summary>
@@ -24,10 +25,28 @@ public class ArtworkFrame : MonoBehaviour, IPointerEnterHandler, IPointerExitHan
     [Header("Artwork Data")]
     [SerializeField] private ArtworkData artworkData;
     
-    [Header("Frame Settings")]
-    [SerializeField] private float frameWidth = 0.1f;
-    [SerializeField] private float frameDepth = 0.05f;
+    [Header("Frame Settings (in Inches)")]
+    [Tooltip("Bleeding (gap between artwork and frame inner edge) in inches.")]
+    [SerializeField] private float bleedingInches = 0.5f;
+
+    [Tooltip("Frame thickness (width of the frame border) in inches.")]
+    [SerializeField] private float frameThicknessInches = 1.0f;
+
+    [Tooltip("Frame depth (Z-axis protrusion) in inches.")]
+    [SerializeField] private float frameDepthInches = 0.5f;
+
+    /// <summary>
+    /// Public accessors so other systems (e.g., InchWallGridData) can compute total occupied space in inches.
+    /// </summary>
+    public float BleedingInches => bleedingInches;
+    public float FrameThicknessInches => frameThicknessInches;
+    public float FrameDepthInches => frameDepthInches;
+
     [SerializeField] private Color frameColor = new Color(0.8f, 0.7f, 0.6f); // Gold/bronze color
+
+    // Legacy fields (in Unity units/meters) - kept for backward-compatibility, not used.
+    [HideInInspector] private float frameWidth = 0.1f;
+    [HideInInspector] private float frameDepth = 0.05f;
     
     [Header("Interaction")]
     // Hover scale disabled - artworks spawn without scaling effects
@@ -107,7 +126,10 @@ public class ArtworkFrame : MonoBehaviour, IPointerEnterHandler, IPointerExitHan
             
             // Calculate aspect ratio and adjust size
             float aspectRatio = (float)texture.width / texture.height;
-            Vector2 size = artworkData.preferredSize;
+
+            // Convert preferred size from inches to Unity units (meters) with high-precision utility
+            Vector2 sizeInches = artworkData.preferredSizeInches;
+            Vector2 size = new Vector2(sizeInches.x.FromInches(), sizeInches.y.FromInches());
             
             if (artworkData.maintainAspectRatio)
             {
@@ -118,7 +140,8 @@ public class ArtworkFrame : MonoBehaviour, IPointerEnterHandler, IPointerExitHan
             // Scale the artwork plane
             if (artworkPlane != null)
             {
-                artworkPlane.transform.localScale = new Vector3(size.x, size.y, 1f);
+                artworkPlane.transform.localScale = new Vector3(size.x, size.y, 0.01f);
+                artworkPlane.transform.localPosition = new Vector3(0, 0, 0);
             }
         }
         
@@ -160,7 +183,7 @@ public class ArtworkFrame : MonoBehaviour, IPointerEnterHandler, IPointerExitHan
             artworkPlane = GameObject.CreatePrimitive(PrimitiveType.Quad);
             artworkPlane.name = "Artwork";
             artworkPlane.transform.SetParent(transform);
-            artworkPlane.transform.localPosition = new Vector3(0, 0, -frameDepth / 2);
+            //artworkPlane.transform.localPosition = new Vector3(0, 0, -frameDepth / 2);
             artworkPlane.transform.localRotation = Quaternion.identity;
             
             // Remove collider from artwork plane
@@ -190,35 +213,42 @@ public class ArtworkFrame : MonoBehaviour, IPointerEnterHandler, IPointerExitHan
         if (artworkData == null || artworkPlane == null) return;
         
         Vector3 artworkScale = artworkPlane.transform.localScale;
-        float frameThickness = frameWidth;
+
+        // Convert inches to Unity units (meters) for accurate placement
+        float bleedingUnits = bleedingInches.FromInches();
+        float frameThicknessUnits = frameThicknessInches.FromInches();
+        float frameDepthUnits = frameDepthInches.FromInches();
+
+        // Total border = bleeding + frame thickness
+        float totalBorder = bleedingUnits + frameThicknessUnits;
         
         if (useFramePieces && frameTop != null && frameRight != null && frameLeft != null && frameBottom != null)
         {
             // Use separate frame pieces with constant X scale, adjusting only Y scale
-            UpdateFramePiecesSize(artworkScale, frameThickness);
+            UpdateFramePiecesSize(artworkScale, bleedingUnits, frameThicknessUnits, frameDepthUnits);
         }
         else
         {
             // Original implementation: single frame mesh
-            // Scale frame to be slightly larger than artwork
+            // Scale frame to be larger than artwork by bleeding + frame thickness on all sides
             if (frameMesh != null)
             {
                 frameMesh.transform.localScale = new Vector3(
-                    artworkScale.x + frameThickness * 2,
-                    artworkScale.y + frameThickness * 2,
-                    frameDepth
+                    artworkScale.x + totalBorder * 2,
+                    artworkScale.y + totalBorder * 2,
+                    frameDepthUnits
                 );
             }
         }
         
-        // Update collider size
+        // Update collider size to match full frame extent
         BoxCollider collider = GetComponent<BoxCollider>();
         if (collider != null)
         {
             collider.size = new Vector3(
-                artworkScale.x + frameThickness * 2,
-                artworkScale.y + frameThickness * 2,
-                frameDepth
+                artworkScale.x + totalBorder * 2,
+                artworkScale.y + totalBorder * 2,
+                frameDepthUnits
             );
             collider.center = Vector3.zero;
         }
@@ -237,8 +267,11 @@ public class ArtworkFrame : MonoBehaviour, IPointerEnterHandler, IPointerExitHan
     /// <summary>
     /// Updates the size of frame pieces (top, right, left, bottom).
     /// Keeps X and Z scales constant and adjusts only Y scale.
+    /// bleedingUnits: gap between artwork edge and frame inner edge (Unity units).
+    /// frameThicknessUnits: width of frame border (Unity units).
+    /// frameDepthUnits: Z-axis depth (Unity units).
     /// </summary>
-    private void UpdateFramePiecesSize(Vector3 artworkScale, float frameThickness)
+    private void UpdateFramePiecesSize(Vector3 artworkScale, float bleedingUnits, float frameThicknessUnits, float frameDepthUnits)
     {
         // Store original X and Z scales on first call (they remain constant)
         if (originalTopX < 0f)
@@ -254,49 +287,54 @@ public class ArtworkFrame : MonoBehaviour, IPointerEnterHandler, IPointerExitHan
             originalBottomZ = frameBottom.transform.localScale.z;
         }
         
+        // Total border on one side: bleeding + frame thickness
+        float totalBorder = bleedingUnits + frameThicknessUnits;
+
         // Position the frame pieces around the artwork
         float halfWidth = artworkScale.x * 0.5f;
         float halfHeight = artworkScale.y * 0.5f;
-        float halfThickness = frameThickness * 0.5f;
+        
+        // Frame inner edge is offset from artwork by bleeding
+        float innerOffset = bleedingUnits + frameThicknessUnits * 0.5f;
         
         // Top/Bottom pieces extend fully (overlapping corners)
-        // Left/Right pieces fit between them (shorter to avoid overlap)
-        float topBottomY = artworkScale.x + frameThickness * 1.55f; // Full width including corners
-        float leftRightY = artworkScale.y - (originalTopX + originalBottomX); // Height minus top/bottom thickness
+        // Left/Right pieces fit between them and extend by 2 * bleeding to avoid visible gaps
+        float topBottomY = artworkScale.x + totalBorder * 2f;         // Full width including corners
+        float leftRightY = artworkScale.y + bleedingUnits * 2f;       // Height + 2 * bleed
         
         // Ensure we don't get negative values
         leftRightY = Mathf.Max(leftRightY, 0.01f);
         
-        // Top piece: constant X and Z scale, Y scale extends fully to overlap corners
-        frameTop.transform.localPosition = new Vector3(0, halfHeight + halfThickness, 0);
+        // Top piece: constant X scale (frame thickness), Y scale extends fully to overlap corners, Z = depth
+        frameTop.transform.localPosition = new Vector3(0, halfHeight + innerOffset, 0);
         frameTop.transform.localScale = new Vector3(
-            originalTopX, // Keep X constant
-            topBottomY, // Full width including corners (overlaps left/right)
-            originalTopZ // Keep Z constant
+            frameThicknessUnits, // Frame thickness
+            topBottomY,          // Full width including corners (overlaps left/right)
+            frameDepthUnits      // Frame depth
         );
         
-        // Bottom piece: constant X and Z scale, Y scale extends fully to overlap corners
-        frameBottom.transform.localPosition = new Vector3(0, -halfHeight - halfThickness, 0);
+        // Bottom piece: constant X scale, Y scale extends fully to overlap corners, Z = depth
+        frameBottom.transform.localPosition = new Vector3(0, -halfHeight - innerOffset, 0);
         frameBottom.transform.localScale = new Vector3(
-            originalBottomX, // Keep X constant
-            topBottomY, // Full width including corners (overlaps left/right)
-            originalBottomZ // Keep Z constant
+            frameThicknessUnits, // Frame thickness
+            topBottomY,          // Full width including corners (overlaps left/right)
+            frameDepthUnits      // Frame depth
         );
         
-        // Left piece: constant X and Z scale, Y scale fits between top/bottom pieces
-        frameLeft.transform.localPosition = new Vector3(-halfWidth - halfThickness, 0, 0);
+        // Left piece: constant X scale, Y scale fits between top/bottom pieces, Z = depth
+        frameLeft.transform.localPosition = new Vector3(-halfWidth - innerOffset, 0, 0);
         frameLeft.transform.localScale = new Vector3(
-            originalLeftX, // Keep X constant
-            leftRightY, // Height minus top/bottom thickness (fits between them)
-            originalLeftZ // Keep Z constant
+            frameThicknessUnits, // Frame thickness
+            leftRightY,          // Height fits between top/bottom
+            frameDepthUnits      // Frame depth
         );
         
-        // Right piece: constant X and Z scale, Y scale fits between top/bottom pieces
-        frameRight.transform.localPosition = new Vector3(halfWidth + halfThickness, 0, 0);
+        // Right piece: constant X scale, Y scale fits between top/bottom pieces, Z = depth
+        frameRight.transform.localPosition = new Vector3(halfWidth + innerOffset, 0, 0);
         frameRight.transform.localScale = new Vector3(
-            originalRightX, // Keep X constant
-            leftRightY, // Height minus top/bottom thickness (fits between them)
-            originalRightZ // Keep Z constant
+            frameThicknessUnits, // Frame thickness
+            leftRightY,          // Height fits between top/bottom
+            frameDepthUnits      // Frame depth
         );
     }
     
@@ -327,6 +365,33 @@ public class ArtworkFrame : MonoBehaviour, IPointerEnterHandler, IPointerExitHan
         {
             Destroy(artworkMatInstance);
         }
+    }
+
+    /// <summary>
+    /// Returns the total outer size of this artwork+frame in inches as it appears on the wall.
+    /// Width/height are derived from the current artwork plane scale, then expanded by
+    /// bleeding + frame thickness on each side.
+    /// </summary>
+    public Vector2 GetOuterSizeInches()
+    {
+        if (artworkPlane == null)
+        {
+            // Fallback to preferred size in inches if plane not yet created/scaled
+            Vector2 baseInches = artworkData != null ? artworkData.preferredSizeInches : Vector2.zero;
+            float border = bleedingInches + frameThicknessInches;
+            return new Vector2(baseInches.x + border * 2f, baseInches.y + border * 2f);
+        }
+
+        Vector3 s = artworkPlane.transform.localScale;
+        // Convert current artwork world size back to inches for high-accuracy accounting
+        float artWidthInches = s.x.ToInches();
+        float artHeightInches = s.y.ToInches();
+
+        float borderInches = bleedingInches + frameThicknessInches;
+        float totalWidthInches = artWidthInches + borderInches * 2f;
+        float totalHeightInches = artHeightInches + borderInches * 2f;
+
+        return new Vector2(totalWidthInches, totalHeightInches);
     }
 }
 

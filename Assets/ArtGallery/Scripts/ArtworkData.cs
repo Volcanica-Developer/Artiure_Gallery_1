@@ -18,9 +18,14 @@ public class ArtworkData : ScriptableObject
     public Texture2D image;
     public Sprite sprite; // Alternative to Texture2D
     
-    [Header("Display Settings")]
-    public Vector2 preferredSize = new Vector2(1f, 1.5f); // Width x Height in meters
+    [Header("Display Settings (Size in Inches)")]
+    [Tooltip("Preferred artwork size in inches (Width x Height). This will be converted to Unity units (meters) at runtime.")]
+    public Vector2 preferredSizeInches = new Vector2(20f, 30f); // Width x Height in inches
     public bool maintainAspectRatio = true;
+
+    // Legacy field kept for backward-compatibility (was meters). Not used anymore.
+    [HideInInspector]
+    public Vector2 preferredSize = new Vector2(1f, 1.5f);
     
     [Header("Additional Info")]
     public string medium = "Digital";

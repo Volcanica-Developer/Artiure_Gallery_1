@@ -15,6 +15,10 @@ public class ArtworkPlacementTool : EditorWindow
     private bool snapToWall = true;
     private float snapDistance = 0.5f;
     private int wallLayerIndex = 6; // Layer index (0-31), will be converted to LayerMask
+
+    // Optional InchWall-based placement
+    private bool useInchWallCenter = false;
+    private InchWallGridData inchWallGridData;
     
     [MenuItem("Tools/Art Gallery/Place Artwork")]
     public static void ShowWindow()
@@ -54,6 +58,18 @@ public class ArtworkPlacementTool : EditorWindow
         wallLayerIndex = EditorGUILayout.LayerField("Wall Layer", wallLayerIndex);
         
         EditorGUILayout.Space();
+
+        // Optional InchWall placement
+        EditorGUILayout.LabelField("Inch Wall Placement (Optional)", EditorStyles.boldLabel);
+        useInchWallCenter = EditorGUILayout.Toggle("Use InchWall Center", useInchWallCenter);
+        inchWallGridData = (InchWallGridData)EditorGUILayout.ObjectField(
+            "InchWall Grid Data",
+            inchWallGridData,
+            typeof(InchWallGridData),
+            true
+        );
+        
+        EditorGUILayout.Space();
         
         // Position and rotation
         placementPosition = EditorGUILayout.Vector3Field("Position", placementPosition);
@@ -72,6 +88,16 @@ public class ArtworkPlacementTool : EditorWindow
         if (GUILayout.Button("Place Artwork at Scene View Cursor"))
         {
             PlaceArtworkAtSceneView();
+        }
+
+        if (useInchWallCenter && GUILayout.Button("Place Artwork on InchWall Center"))
+        {
+            PlaceArtworkOnInchWallCenter();
+        }
+
+        if (useInchWallCenter && GUILayout.Button("Place Second Artwork Side-by-Side on InchWall"))
+        {
+            PlaceSecondArtworkOnInchWallSideBySide();
         }
         
         if (GUILayout.Button("Place All Artworks from Manager"))
@@ -189,6 +215,67 @@ public class ArtworkPlacementTool : EditorWindow
         
         // Auto-place on walls
         manager.AutoPlaceArtworksOnWalls();
+    }
+    
+    private void PlaceArtworkOnInchWallCenter()
+    {
+        if (selectedArtwork == null)
+        {
+            Debug.LogWarning("Artwork Placement Tool: No artwork selected.");
+            return;
+        }
+
+        if (inchWallGridData == null)
+        {
+            Debug.LogWarning("Artwork Placement Tool: InchWall Grid Data is not assigned.");
+            return;
+        }
+
+        ArtworkManager manager = FindObjectOfType<ArtworkManager>();
+        if (manager == null)
+        {
+            Debug.LogWarning("Artwork Placement Tool: No ArtworkManager found in scene.");
+            return;
+        }
+
+        ArtworkFrame frame = manager.PlaceArtworkOnInchWallCenter(selectedArtwork, inchWallGridData);
+        if (frame != null)
+        {
+            Selection.activeGameObject = frame.gameObject;
+            Undo.RegisterCreatedObjectUndo(frame.gameObject, "Place Artwork on InchWall Center");
+        }
+    }
+
+    private void PlaceSecondArtworkOnInchWallSideBySide()
+    {
+        if (selectedArtwork == null)
+        {
+            Debug.LogWarning("Artwork Placement Tool: No artwork selected for second placement.");
+            return;
+        }
+
+        if (inchWallGridData == null)
+        {
+            Debug.LogWarning("Artwork Placement Tool: InchWall Grid Data is not assigned.");
+            return;
+        }
+
+        ArtworkManager manager = FindObjectOfType<ArtworkManager>();
+        if (manager == null)
+        {
+            Debug.LogWarning("Artwork Placement Tool: No ArtworkManager found in scene.");
+            return;
+        }
+
+        bool success = manager.TryPlaceSecondArtworkOnInchWallSideBySide(selectedArtwork, inchWallGridData);
+        if (!success)
+        {
+            // Error is already logged by ArtworkManager; we just stop here.
+            return;
+        }
+
+        // If successful, select the grid root (or leave selection as-is).
+        Selection.activeGameObject = inchWallGridData.gameObject;
     }
     
     private void SnapToWall(Transform frameTransform)

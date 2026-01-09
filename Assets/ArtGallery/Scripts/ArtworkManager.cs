@@ -166,6 +166,218 @@ public class ArtworkManager : MonoBehaviour
         
         return frame;
     }
+
+    /// <summary>
+    /// Places an artwork on the center grid cell of an InchWall (using InchWallGridData).
+    /// For odd grids (e.g., 3x3), this is the exact center cell (1,1 in 0-based, 2x2 in 1-based).
+    /// For even grids, chooses the upper-left of the four center cells.
+    /// </summary>
+    public ArtworkFrame PlaceArtworkOnInchWallCenter(ArtworkData artwork, InchWallGridData gridData)
+    {
+        if (artwork == null || gridData == null)
+        {
+            Debug.LogWarning("ArtworkManager: Cannot place artwork on InchWall center, artwork or gridData is null.");
+            return null;
+        }
+
+        int cellsX = gridData.CellsX;
+        int cellsY = gridData.CellsY;
+        if (cellsX <= 0 || cellsY <= 0)
+        {
+            Debug.LogWarning("ArtworkManager: InchWallGridData has invalid grid size.");
+            return null;
+        }
+
+        // Smart detection: if center already has an artwork, do not place another one
+        if (gridData.IsCenterOccupied())
+        {
+            Debug.LogError("ArtworkManager: InchWall center is already occupied. Cannot place another artwork in the center.");
+            return null;
+        }
+
+        // Center indices: odd -> exact center, even -> upper-left of 4 central cells
+        int centerX = (cellsX - 1) / 2;
+        int centerY = (cellsY - 1) / 2;
+
+        Vector3 centerWorldPos = gridData.GetWorldPosition(centerX, centerY);
+
+        // Wall normal: front face is -forward of the wall root (InchWallBuilder used this convention)
+        Vector3 wallNormal = -gridData.transform.forward;
+
+        // Offset slightly from wall using existing defaultWallDistance
+        Vector3 position = centerWorldPos + wallNormal * defaultWallDistance;
+
+        ArtworkFrame frame = PlaceArtworkOnWall(artwork, position, wallNormal);
+        if (frame != null)
+        {
+            // Use the frame's actual outer size in inches (artwork + bleeding + frame thickness)
+            // to record how many 1x1 inch grid cells this frame occupies on the InchWall.
+            Vector2 outerSizeInches = frame.GetOuterSizeInches();
+            gridData.MarkCenterOccupied(frame, outerSizeInches);
+        }
+
+        return frame;
+    }
+
+    /// <summary>
+    /// Attempts to place a second artwork on the same InchWall.
+    /// The wall is conceptually divided horizontally into two equal parts; the first artwork
+    /// is centered in the left half, and the second artwork is centered in the right half.
+    /// If either artwork does not fit within its half (or exceeds wall height), placement fails
+    /// and an error is logged.
+    ///
+    /// Usage pattern:
+    /// 1) Call PlaceArtworkOnInchWallCenter() for the first artwork (initially at wall center).
+    /// 2) Call TryPlaceSecondArtworkOnInchWallSideBySide() for the second artwork; both are then moved
+    ///    so each is centered within its half of the InchWall.
+    /// </summary>
+    public bool TryPlaceSecondArtworkOnInchWallSideBySide(ArtworkData secondArtwork, InchWallGridData gridData)
+    {
+        if (secondArtwork == null || gridData == null)
+        {
+            Debug.LogWarning("ArtworkManager: Cannot place second artwork on InchWall; artwork or gridData is null.");
+            return false;
+        }
+
+        int cellsX = gridData.CellsX;
+        int cellsY = gridData.CellsY;
+        if (cellsX <= 0 || cellsY <= 0)
+        {
+            Debug.LogWarning("ArtworkManager: InchWallGridData has invalid grid size.");
+            return false;
+        }
+
+        // We require an existing center artwork to form a pair.
+        if (!gridData.IsCenterOccupied())
+        {
+            Debug.LogError("ArtworkManager: No center artwork on InchWall. Place the first artwork in the center before adding a second.");
+            return false;
+        }
+
+        ArtworkFrame firstFrame = gridData.GetCenterArtworkFrame();
+        if (firstFrame == null)
+        {
+            Debug.LogError("ArtworkManager: Center artwork reference on InchWall is missing.");
+            return false;
+        }
+
+        // Compute outer sizes for existing (first) and new (second) artworks in inches
+        Vector2 firstSizeInches = firstFrame.GetOuterSizeInches();
+
+        // We'll create the second frame near the center, compute its size, then reposition both if they fit.
+        // Determine wall center and normal
+        int centerCellX = (cellsX - 1) / 2;
+        int centerCellY = (cellsY - 1) / 2;
+        Vector3 centerWorldPos = gridData.GetWorldPosition(centerCellX, centerCellY);
+        Vector3 wallNormal = -gridData.transform.forward;
+
+        // Temporary placement for the second frame (at center) so it can build its geometry and report size
+        ArtworkFrame secondFrame = PlaceArtworkOnWall(secondArtwork, centerWorldPos + wallNormal * defaultWallDistance, wallNormal);
+        if (secondFrame == null)
+        {
+            Debug.LogError("ArtworkManager: Failed to create second artwork frame on InchWall.");
+            return false;
+        }
+
+        Vector2 secondSizeInches = secondFrame.GetOuterSizeInches();
+ 
+        // Convert sizes to grid cells (1 cell = 1 inch)
+        int firstWidthCells   = Mathf.Max(1, Mathf.RoundToInt(firstSizeInches.x));
+        int firstHeightCells  = Mathf.Max(1, Mathf.RoundToInt(firstSizeInches.y));
+        int secondWidthCells  = Mathf.Max(1, Mathf.RoundToInt(secondSizeInches.x));
+        int secondHeightCells = Mathf.Max(1, Mathf.RoundToInt(secondSizeInches.y));
+ 
+        int maxHeightCells = Mathf.Max(firstHeightCells, secondHeightCells);
+ 
+        // Vertical fit check for both artworks independently against wall height
+        if (maxHeightCells > cellsY)
+        {
+            Debug.LogError($"ArtworkManager: Cannot place two artworks on InchWall; required height {maxHeightCells} cells exceeds wall height {cellsY} cells.");
+            placedFrames.Remove(secondFrame);
+#if UNITY_EDITOR
+            DestroyImmediate(secondFrame.gameObject);
+#else
+            Destroy(secondFrame.gameObject);
+#endif
+            return false;
+        }
+ 
+        // Horizontal fit check per half: divide wall horizontally into two halves
+        int mid = cellsX / 2;              // split index
+        int leftHalfWidth  = mid;          // cells [0 .. mid-1]
+        int rightHalfWidth = cellsX - mid; // cells [mid .. cellsX-1]
+ 
+        if (firstWidthCells > leftHalfWidth)
+        {
+            Debug.LogError($"ArtworkManager: First artwork width {firstWidthCells} cells does not fit in left half of width {leftHalfWidth} cells.");
+            placedFrames.Remove(secondFrame);
+#if UNITY_EDITOR
+            DestroyImmediate(secondFrame.gameObject);
+#else
+            Destroy(secondFrame.gameObject);
+#endif
+            return false;
+        }
+ 
+        if (secondWidthCells > rightHalfWidth)
+        {
+            Debug.LogError($"ArtworkManager: Second artwork width {secondWidthCells} cells does not fit in right half of width {rightHalfWidth} cells.");
+            placedFrames.Remove(secondFrame);
+#if UNITY_EDITOR
+            DestroyImmediate(secondFrame.gameObject);
+#else
+            Destroy(secondFrame.gameObject);
+#endif
+            return false;
+        }
+ 
+        // Compute world distance for one cell step to the right (1 inch along wall)
+        Vector3 rightStepWorld = gridData.GetWorldPosition(Mathf.Min(centerCellX + 1, cellsX - 1), centerCellY) - centerWorldPos;
+ 
+        // Centers for left and right halves in cell indices
+        int leftCount  = leftHalfWidth;
+        int rightCount = rightHalfWidth;
+ 
+        int leftCenterCellX  = (leftCount - 1) / 2;                    // 0-based in [0, leftHalfWidth-1]
+        int rightCenterCellX = mid + (rightCount - 1) / 2;             // 0-based in [mid, cellsX-1]
+ 
+        // Convert cell centers to world positions
+        Vector3 leftCenterWorld  = gridData.GetWorldPosition(leftCenterCellX,  centerCellY);
+        Vector3 rightCenterWorld = gridData.GetWorldPosition(rightCenterCellX, centerCellY);
+ 
+        // Final positions for artwork centers
+        Vector3 firstCenterWorld  = leftCenterWorld;
+        Vector3 secondCenterWorld = rightCenterWorld;
+
+        // Apply final positions and orientations
+        firstFrame.transform.position  = firstCenterWorld + wallNormal * defaultWallDistance;
+        firstFrame.transform.rotation  = Quaternion.LookRotation(-wallNormal);
+
+        secondFrame.transform.position = secondCenterWorld + wallNormal * defaultWallDistance;
+        secondFrame.transform.rotation = Quaternion.LookRotation(-wallNormal);
+
+        // Update InchWall occupancy to reflect the combined pair footprint.
+        // Occupied span is from the leftmost used cell to the rightmost used cell.
+        // Estimate using discrete cell indices based on half centers and widths.
+        int firstHalfSpan  = firstWidthCells;
+        int secondHalfSpan = secondWidthCells;
+ 
+        int firstMinCellX  = leftCenterCellX  - firstHalfSpan  / 2;
+        int firstMaxCellX  = firstMinCellX    + firstHalfSpan  - 1;
+        int secondMinCellX = rightCenterCellX - secondHalfSpan / 2;
+        int secondMaxCellX = secondMinCellX   + secondHalfSpan - 1;
+ 
+        int minCellXUsed = Mathf.Max(0, Mathf.Min(firstMinCellX, secondMinCellX));
+        int maxCellXUsed = Mathf.Min(cellsX - 1, Mathf.Max(firstMaxCellX, secondMaxCellX));
+        int occupiedWidthCells = Mathf.Max(1, maxCellXUsed - minCellXUsed + 1);
+ 
+        float combinedWidthInches  = occupiedWidthCells; // 1 cell = 1 inch
+        float combinedHeightInches = Mathf.Max(firstSizeInches.y, secondSizeInches.y);
+        gridData.MarkCenterOccupied(firstFrame, new Vector2(combinedWidthInches, combinedHeightInches));
+
+        Debug.Log($"ArtworkManager: Placed two artworks side by side on InchWall (total width {combinedWidthInches} inches).");
+        return true;
+    }
     
     /// <summary>
     /// Places an artwork at a specific transform position.
@@ -607,12 +819,10 @@ public class ArtworkManager : MonoBehaviour
 
                 if (chosenSize != null)
                 {
-                    // Sizes from parsedAvailableSizes are in inches; convert to Unity units (meters)
-                    float widthUnits = chosenSize.width.FromInches();
-                    float heightUnits = chosenSize.height.FromInches();
-
-                    // ArtworkFrame will still respect maintainAspectRatio when scaling the plane.
-                    data.preferredSize = new Vector2(widthUnits, heightUnits);
+                    // Sizes from parsedAvailableSizes are in inches. Store directly in ArtworkData as inches.
+                    // Conversion to Unity units (meters) is done at runtime via UnitConversionExtensions for
+                    // maximum precision.
+                    data.preferredSizeInches = new Vector2(chosenSize.width, chosenSize.height);
                 }
             }
             
