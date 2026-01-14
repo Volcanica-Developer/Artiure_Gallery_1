@@ -168,6 +168,67 @@ public class ArtworkManager : MonoBehaviour
     }
 
     /// <summary>
+    /// Places an artwork with its TOP-LEFT outer corner aligned to the TOP-LEFT of a specific grid cell.
+    /// The outer corner includes the artwork, bleeding, and frame thickness. This is useful for precise
+    /// grid-based layouts where artworks are anchored to pixel corners instead of centers.
+    /// </summary>
+    public ArtworkFrame PlaceArtworkAlignedToPixelTopLeft(ArtworkData artwork, InchWallGridData gridData, int cellX, int cellY)
+    {
+        if (artwork == null || gridData == null)
+        {
+            Debug.LogWarning("ArtworkManager: Cannot place artwork aligned to pixel top-left; artwork or gridData is null.");
+            return null;
+        }
+
+        int cellsX = gridData.CellsX;
+        int cellsY = gridData.CellsY;
+        if (cellsX <= 0 || cellsY <= 0)
+        {
+            Debug.LogWarning("ArtworkManager: InchWallGridData has invalid grid size.");
+            return null;
+        }
+
+        // Determine wall normal (front face is -forward of the wall root)
+        Vector3 wallNormal = -gridData.transform.forward;
+
+        // First create the frame roughly at the target cell so geometry & scaling are initialized.
+        Vector3 approxCellCenterWorld = gridData.GetWorldPosition(cellX, cellY);
+        Vector3 initialPos = approxCellCenterWorld + wallNormal * defaultWallDistance;
+        ArtworkFrame frame = PlaceArtworkOnWall(artwork, initialPos, wallNormal);
+        if (frame == null)
+        {
+            Debug.LogError("ArtworkManager: Failed to create artwork frame for pixel-aligned placement.");
+            return null;
+        }
+
+        // Get the full outer size of the frame in inches, then convert to Unity units (meters)
+        Vector2 outerSizeInches = frame.GetOuterSizeInches();
+        float outerWidthUnits  = outerSizeInches.x.FromInches();
+        float outerHeightUnits = outerSizeInches.y.FromInches();
+
+        // Compute the desired top-left position of the grid cell in local space
+        Vector3 cellTopLeftLocal = gridData.GetLocalPixelTopLeft(cellX, cellY);
+
+        // Compute the required center position in local space so that the artwork's top-left
+        // outer corner matches the cell's top-left:
+        // center.x = cellTL.x + width/2, center.y = cellTL.y - height/2
+        Vector3 centerLocal = new Vector3(
+            cellTopLeftLocal.x + outerWidthUnits * 0.5f,
+            cellTopLeftLocal.y - outerHeightUnits * 0.5f,
+            cellTopLeftLocal.z
+        );
+
+        // Convert to world and offset from wall surface
+        Vector3 centerWorldOnPlane = gridData.transform.TransformPoint(centerLocal);
+        Vector3 finalWorldPos = centerWorldOnPlane + wallNormal * defaultWallDistance;
+
+        frame.transform.position = finalWorldPos;
+        frame.transform.rotation = Quaternion.LookRotation(-wallNormal);
+
+        return frame;
+    }
+
+    /// <summary>
     /// Places an artwork on the center grid cell of an InchWall (using InchWallGridData).
     /// For odd grids (e.g., 3x3), this is the exact center cell (1,1 in 0-based, 2x2 in 1-based).
     /// For even grids, chooses the upper-left of the four center cells.

@@ -158,4 +158,38 @@ public class InchWallGridData : MonoBehaviour
     {
         return transform.TransformPoint(GetLocalPosition(x, y));
     }
+
+    /// <summary>
+    /// Returns the local-space position of the TOP-LEFT corner of the grid cell at (x, y),
+    /// where (0,0) is the top-left cell of the wall.
+    /// </summary>
+    public Vector3 GetLocalPixelTopLeft(int x, int y)
+    {
+        if (cellsX <= 0 || cellsY <= 0)
+            return Vector3.zero;
+
+        x = Mathf.Clamp(x, 0, cellsX - 1);
+        y = Mathf.Clamp(y, 0, cellsY - 1);
+
+        float stepX = widthUnits / cellsX;
+        float stepY = heightUnits / cellsY;
+        float halfWidth = widthUnits * 0.5f;
+        float halfHeight = heightUnits * 0.5f;
+
+        // Top-left of cell (x,y):
+        // Horizontal: for x=0, at right wall edge (+halfWidth); moving left as x increases.
+        // Vertical:   for y=0, at top edge (+halfHeight); moving down as y increases.
+        float px = halfWidth - x * stepX;
+        float py = halfHeight - y * stepY;
+
+        return new Vector3(px, py, zOffset);
+    }
+
+    /// <summary>
+    /// Returns the world-space position of the TOP-LEFT corner of the grid cell at (x, y).
+    /// </summary>
+    public Vector3 GetWorldPixelTopLeft(int x, int y)
+    {
+        return transform.TransformPoint(GetLocalPixelTopLeft(x, y));
+    }
 }
