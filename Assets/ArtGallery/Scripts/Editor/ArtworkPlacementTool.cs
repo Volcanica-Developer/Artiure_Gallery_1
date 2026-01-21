@@ -1,6 +1,7 @@
 using UnityEngine;
 using UnityEditor;
 using System.Collections.Generic;
+using Utilities;
 
 /// <summary>
 /// Editor tool for easily placing artworks in the scene.
@@ -8,6 +9,8 @@ using System.Collections.Generic;
 /// </summary>
 public class ArtworkPlacementTool : EditorWindow
 {
+    private Vector2 scrollPosition = Vector2.zero;
+
     private ArtworkData selectedArtwork;
     private Vector3 placementPosition = Vector3.zero;
     private Vector3 placementRotation = Vector3.zero;
@@ -19,6 +22,16 @@ public class ArtworkPlacementTool : EditorWindow
     // Optional InchWall-based placement
     private bool useInchWallCenter = false;
     private InchWallGridData inchWallGridData;
+
+    // Edge-to-edge distance calculator (for frames of different sizes)
+    private ArtworkFrame distanceCurrentFrame;
+    private ArtworkFrame distanceNextFrame;
+    private float edgeHorizontalGutterInches = 0f;
+
+    // Optional helper for "two small squares beside a big square" layout
+    private bool showTripleLayoutHelper = false;
+    private float tripleVerticalGutterInches = 3f;
+    private float tripleTopBottomMarginInches = 0f;
     
     [MenuItem("Tools/Art Gallery/Place Artwork")]
     public static void ShowWindow()
@@ -28,6 +41,8 @@ public class ArtworkPlacementTool : EditorWindow
     
     private void OnGUI()
     {
+        scrollPosition = EditorGUILayout.BeginScrollView(scrollPosition);
+
         GUILayout.Label("Artwork Placement Tool", EditorStyles.boldLabel);
         EditorGUILayout.Space();
         
@@ -125,10 +140,194 @@ public class ArtworkPlacementTool : EditorWindow
         EditorGUI.EndDisabledGroup();
         
         EditorGUILayout.Space();
+
+        DrawEdgeToEdgeDistanceCalculator();
+        
+        EditorGUILayout.Space();
         EditorGUILayout.HelpBox(
             "Tip: Use Scene View to position your cursor, then click 'Place Artwork at Scene View Cursor'",
             MessageType.Info
         );
+
+        EditorGUILayout.EndScrollView();
+    }
+
+    /// <summary>
+    /// Simple calculator that takes two ArtworkFrame instances and tells you how far (in inches and meters)
+    /// to move the NEXT frame's center in X or Y so it sits exactly edge-to-edge with the CURRENT frame,
+    /// even if their sizes are different.
+    /// </summary>
+    private void DrawEdgeToEdgeDistanceCalculator()
+    {
+        GUILayout.Label("Edge-to-Edge Distance Calculator", EditorStyles.boldLabel);
+
+        // Try to auto-populate from current selection if fields are empty
+        // If you select one ArtworkFrame in the Hierarchy, it becomes the CURRENT frame.
+        // If you select two ArtworkFrames, the first becomes CURRENT and the second NEXT.
+        if ((distanceCurrentFrame == null || distanceNextFrame == null) && Selection.gameObjects != null)
+        {
+            ArtworkFrame first = null;
+            ArtworkFrame second = null;
+            int found = 0;
+
+            foreach (var go in Selection.gameObjects)
+            {
+                if (go == null) continue;
+                var frame = go.GetComponent<ArtworkFrame>();
+                if (frame == null) continue;
+
+                if (found == 0)
+                {
+                    first = frame;
+                    found = 1;
+                }
+                else if (found == 1)
+                {
+                    second = frame;
+                    found = 2;
+                    break;
+                }
+            }
+
+            if (distanceCurrentFrame == null && first != null)
+            {
+                distanceCurrentFrame = first;
+            }
+            if (distanceNextFrame == null && second != null)
+            {
+                distanceNextFrame = second;
+            }
+        }
+
+        distanceCurrentFrame = (ArtworkFrame)EditorGUILayout.ObjectField(
+            "Current Frame",
+            distanceCurrentFrame,
+            typeof(ArtworkFrame),
+            true
+        );
+
+        distanceNextFrame = (ArtworkFrame)EditorGUILayout.ObjectField(
+            "Next Frame",
+            distanceNextFrame,
+            typeof(ArtworkFrame),
+            true
+        );
+
+        EditorGUILayout.HelpBox(
+            "You can drag frames from the Hierarchy into these fields, or simply select 1-2 ArtworkFrame objects and reopen/refresh this window to auto-fill.",
+            MessageType.None
+        );
+
+        if (distanceCurrentFrame == null || distanceNextFrame == null)
+        {
+            EditorGUILayout.HelpBox(
+                "Assign both a CURRENT frame and a NEXT frame to calculate distances.",
+                MessageType.Info
+            );
+            return;
+        }
+
+        // Get outer sizes (including frame + bleed) in inches
+        Vector2 currentOuterInches = distanceCurrentFrame.GetOuterSizeInches();
+        Vector2 nextOuterInches = distanceNextFrame.GetOuterSizeInches();
+
+        // Center-to-center offset for perfect edge-to-edge placement (no gutter)
+        float deltaXInches = 0.5f * (currentOuterInches.x + nextOuterInches.x);
+        float deltaYInches = 0.5f * (currentOuterInches.y + nextOuterInches.y);
+
+        // Additional horizontal gutter between the two frames (in inches)
+        edgeHorizontalGutterInches = EditorGUILayout.FloatField(
+            "Horizontal gutter between frames (in)",
+            edgeHorizontalGutterInches
+        );
+
+        float moveRightWithGutterInches = deltaXInches + Mathf.Max(0f, edgeHorizontalGutterInches);
+
+        // Convert to Unity units (meters)
+        float deltaXUnits = deltaXInches.FromInches();
+        float deltaYUnits = deltaYInches.FromInches();
+        float moveRightWithGutterUnits = moveRightWithGutterInches.FromInches();
+
+        EditorGUILayout.Space();
+        EditorGUILayout.LabelField("Current outer size (in)",
+            $"{currentOuterInches.x:F3} in x {currentOuterInches.y:F3} in");
+        EditorGUILayout.LabelField("Next outer size (in)",
+            $"{nextOuterInches.x:F3} in x {nextOuterInches.y:F3} in");
+
+        EditorGUILayout.Space();
+
+        EditorGUILayout.LabelField("Move NEXT frame's center for edge-to-edge:", EditorStyles.boldLabel);
+        EditorGUILayout.LabelField(
+            "Offset in inches (no gutter)",
+            $"{deltaXInches:F3} in in X, {deltaYInches:F3} in in Y"
+        );
+        EditorGUILayout.LabelField(
+            "Offset in Unity units (meters, no gutter)",
+            $"{deltaXUnits:F3} m in X, {deltaYUnits:F3} m in Y"
+        );
+
+        EditorGUILayout.Space();
+        EditorGUILayout.LabelField("Move NEXT frame to the RIGHT (with gutter):", EditorStyles.boldLabel);
+        EditorGUILayout.LabelField(
+            "Right-move in inches",
+            $"{moveRightWithGutterInches:F3} in in +X"
+        );
+        EditorGUILayout.LabelField(
+            "Right-move in Unity units (meters)",
+            $"{moveRightWithGutterUnits:F3} m in +X"
+        );
+
+        EditorGUILayout.HelpBox(
+            "Base formula (no gutter): 94 = (current outer size + next outer size) / 2. " +
+            "Right-move with gutter adds the specified horizontal gutter to 94 in +X. Assumes centered pivots.",
+            MessageType.None
+        );
+
+        // Optional helper for the specific layout: two smaller squares stacked next to a bigger square
+        showTripleLayoutHelper = EditorGUILayout.Foldout(showTripleLayoutHelper, "Two-small + big layout helper (size suggestion)");
+        if (showTripleLayoutHelper)
+        {
+            EditorGUI.indentLevel++;
+
+            // Use the CURRENT frame's outer height as the big square size
+            float bigHeightInches = currentOuterInches.y;
+            EditorGUILayout.LabelField("Big frame outer height (in)", bigHeightInches.ToString("F3"));
+
+            tripleVerticalGutterInches = EditorGUILayout.FloatField(
+                "Vertical gutter between the two small frames (in)",
+                tripleVerticalGutterInches
+            );
+
+            tripleTopBottomMarginInches = EditorGUILayout.FloatField(
+                "Top/Bottom margin above/below small pair (in)",
+                tripleTopBottomMarginInches
+            );
+
+            // Solve: 2*S + Gv + 2*M = BigHeight  =>  S = (BigHeight - Gv - 2*M) / 2
+            float smallSquareSizeInches =
+                (bigHeightInches - tripleVerticalGutterInches - 2f * tripleTopBottomMarginInches) / 2f;
+
+            EditorGUILayout.LabelField(
+                "Recommended small square size",
+                $"{smallSquareSizeInches:F3} in x {smallSquareSizeInches:F3} in"
+            );
+
+            float checkTotalHeight = 2f * smallSquareSizeInches + tripleVerticalGutterInches + 2f * tripleTopBottomMarginInches;
+            EditorGUILayout.LabelField(
+                "Check total vertical span",
+                $"{checkTotalHeight:F3} in (should equal big height {bigHeightInches:F3} in)"
+            );
+
+            EditorGUILayout.HelpBox(
+                "This assumes two equal small squares stacked vertically to the LEFT of the big frame. " +
+                "Set gutter = desired gap between the two small frames. " +
+                "Set top/bottom margin if you want extra space above and below the small pair inside the big frame's height. " +
+                "For your example: big 60in, gutter 3in, margin 2in -> small ≈ 26.5in.",
+                MessageType.Info
+            );
+
+            EditorGUI.indentLevel--;
+        }
     }
     
     private void PlaceArtwork()

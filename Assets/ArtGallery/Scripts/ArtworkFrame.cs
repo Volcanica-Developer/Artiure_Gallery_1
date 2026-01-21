@@ -35,12 +35,38 @@ public class ArtworkFrame : MonoBehaviour, IPointerEnterHandler, IPointerExitHan
     [Tooltip("Frame depth (Z-axis protrusion) in inches.")]
     [SerializeField] private float frameDepthInches = 0.5f;
 
+    [Header("Inspector Edge-to-Edge Helper (Inches)")]
+    [Tooltip("If enabled, use the custom next artwork outer size below when computing edge-to-edge offsets in the inspector.")]
+    [SerializeField] private bool useCustomNextArtworkSize = false;
+
+    [Tooltip("Next artwork OUTER width in inches (including frame and bleeding). Used only for inspector calculations.")]
+    [SerializeField] private float customNextArtworkOuterWidthInches = 0f;
+
+    [Tooltip("Next artwork OUTER height in inches (including frame and bleeding). Used only for inspector calculations.")]
+    [SerializeField] private float customNextArtworkOuterHeightInches = 0f;
+
     /// <summary>
     /// Public accessors so other systems (e.g., InchWallGridData) can compute total occupied space in inches.
     /// </summary>
     public float BleedingInches => bleedingInches;
     public float FrameThicknessInches => frameThicknessInches;
     public float FrameDepthInches => frameDepthInches;
+
+    /// <summary>
+    /// When true, the inspector will use the configured custom next artwork outer size
+    /// (customNextArtworkOuterWidthInches/customNextArtworkOuterHeightInches) when
+    /// computing edge-to-edge offsets.
+    /// </summary>
+    public bool UseCustomNextArtworkSize => useCustomNextArtworkSize;
+
+    /// <summary>
+    /// Returns the configured custom next artwork OUTER size in inches (including frame and bleeding).
+    /// Values are clamped to non-negative for safety.
+    /// </summary>
+    public Vector2 CustomNextArtworkOuterSizeInches => new Vector2(
+        Mathf.Max(0f, customNextArtworkOuterWidthInches),
+        Mathf.Max(0f, customNextArtworkOuterHeightInches)
+    );
 
     [SerializeField] private Color frameColor = new Color(0.8f, 0.7f, 0.6f); // Gold/bronze color
 
@@ -392,6 +418,34 @@ public class ArtworkFrame : MonoBehaviour, IPointerEnterHandler, IPointerExitHan
         float totalHeightInches = artHeightInches + borderInches * 2f;
 
         return new Vector2(totalWidthInches, totalHeightInches);
+    }
+
+    /// <summary>
+    /// Computes how far, in inches, the center of a NEXT artwork needs to move in X/Y
+    /// to be placed exactly edge-to-edge with THIS artwork+frame.
+    ///
+    /// If UseCustomNextArtworkSize is false, this assumes the next artwork's outer size
+    /// is identical to this frame's outer size, so the offset is simply this outer
+    /// width/height.
+    ///
+    /// If UseCustomNextArtworkSize is true, it will use CustomNextArtworkOuterSizeInches
+    /// as the "other" outer size and compute the center-to-center spacing as:
+    ///   delta = (thisOuter + otherOuter) / 2
+    /// </summary>
+    public Vector2 GetEdgeToEdgeOffsetInches()
+    {
+        Vector2 thisOuter = GetOuterSizeInches();
+
+        if (!UseCustomNextArtworkSize)
+        {
+            // Same outer size: move by this outer width/height
+            return thisOuter;
+        }
+
+        Vector2 otherOuter = CustomNextArtworkOuterSizeInches;
+        float deltaX = 0.5f * (thisOuter.x + otherOuter.x);
+        float deltaY = 0.5f * (thisOuter.y + otherOuter.y);
+        return new Vector2(deltaX, deltaY);
     }
 }
 

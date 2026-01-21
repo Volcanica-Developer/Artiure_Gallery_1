@@ -40,6 +40,7 @@ public class FirstPersonController : MonoBehaviour
     [Header("Click To Move Settings")]
     [SerializeField] private bool enableClickToMove = false;
     [SerializeField] private LayerMask clickMoveLayerMask = ~0; // Layers that can be clicked for movement (e.g. Ground)
+    [SerializeField] private LayerMask clickMoveIgnoreLayers; // Layers that should NOT trigger click-to-move (e.g. Display Wall)
     [SerializeField] private float clickMoveLerpSpeed = 5f;
     [SerializeField] private float clickMoveStopDistance = 0.05f;
     [SerializeField] private float clickMoveMaxClickDistance = 25f; // max mouse drag (pixels) to still count as a click
@@ -56,6 +57,9 @@ public class FirstPersonController : MonoBehaviour
     [Header("Smoothing Settings")]
     [SerializeField, Range(0f, 20f)] private float movementSmoothing = 10f;
     [SerializeField, Range(0f, 30f)] private float lookSmoothing = 15f;
+
+    [Header("Debug")]
+    [SerializeField] private bool debugClickToMoveLayers = false;
     
     private CharacterController characterController;
     private Camera playerCamera;
@@ -207,6 +211,10 @@ public class FirstPersonController : MonoBehaviour
     
     private void HandleMovement()
     {
+        // If the CharacterController is disabled (e.g. while tweening to a wall stand point), skip movement.
+        if (characterController == null || !characterController.enabled)
+            return;
+
         // Check if grounded
         bool isGrounded = characterController.isGrounded;
         
@@ -576,6 +584,11 @@ public class FirstPersonController : MonoBehaviour
 
     }
 
+    private bool IsLayerInMask(int layer, LayerMask mask)
+    {
+        return (mask.value & (1 << layer)) != 0;
+    }
+
     private void HandleClickToMoveInput()
     {
         if (!enableClickToMove || playerCamera == null)
@@ -591,18 +604,53 @@ public class FirstPersonController : MonoBehaviour
                 if (!Application.isMobilePlatform)
                 {
                     Ray hoverRay = playerCamera.ScreenPointToRay(Input.mousePosition);
-                    if (Physics.Raycast(hoverRay, out RaycastHit hoverHit, 100f, clickMoveLayerMask))
-                    {
-                        // Keep marker "stuck" to its original height, only move in X/Z
-                        Vector3 markerPos = clickMoveMarker.position;
-                        markerPos.x = hoverHit.point.x;
-                        markerPos.z = hoverHit.point.z;
-                        clickMoveMarker.position = markerPos;
+                    int combinedMask = clickMoveLayerMask | clickMoveIgnoreLayers;
+                    RaycastHit[] hits = Physics.RaycastAll(hoverRay, 100f, combinedMask);
 
-                        if (!clickMoveMarker.gameObject.activeSelf)
+                    if (hits.Length > 0)
+                    {
+                        System.Array.Sort(hits, (a, b) => a.distance.CompareTo(b.distance));
+
+                        bool blockedByIgnored = false;
+                        bool placedMarker = false;
+
+                        foreach (var hoverHit in hits)
                         {
-                            clickMoveMarker.gameObject.SetActive(true);
-                            clickMoveMarkerTween?.Play();
+                            int layer = hoverHit.collider.gameObject.layer;
+
+                            // If the closest thing in the way is an ignored layer (e.g. Display Wall), block marker
+                            if (IsLayerInMask(layer, clickMoveIgnoreLayers))
+                            {
+                                blockedByIgnored = true;
+                                break;
+                            }
+
+                            // If it is a valid click-move layer, place the marker there
+                            if (IsLayerInMask(layer, clickMoveLayerMask))
+                            {
+                                Vector3 markerPos = clickMoveMarker.position;
+                                markerPos.x = hoverHit.point.x;
+                                markerPos.z = hoverHit.point.z;
+                                clickMoveMarker.position = markerPos;
+
+                                if (!clickMoveMarker.gameObject.activeSelf)
+                                {
+                                    clickMoveMarker.gameObject.SetActive(true);
+                                    clickMoveMarkerTween?.Play();
+                                }
+
+                                placedMarker = true;
+                                break;
+                            }
+                        }
+
+                        if (!placedMarker || blockedByIgnored)
+                        {
+                            if (clickMoveMarker.gameObject.activeSelf)
+                            {
+                                clickMoveMarker.gameObject.SetActive(false);
+                                clickMoveMarkerTween?.Pause();
+                            }
                         }
                     }
                     else if (clickMoveMarker.gameObject.activeSelf)
@@ -651,14 +699,56 @@ public class FirstPersonController : MonoBehaviour
                 return;
 
             Ray ray = playerCamera.ScreenPointToRay(mouseUpPos);
-            if (Physics.Raycast(ray, out RaycastHit hit, 100f, clickMoveLayerMask))
+            int combinedMask = clickMoveLayerMask | clickMoveIgnoreLayers;
+            RaycastHit[] hits = Physics.RaycastAll(ray, 100f, combinedMask);
+            if (hits.Length > 0)
             {
-                Vector3 target = hit.point;
-                // Keep current character height so we don't snap vertically if the floor is uneven
-                target.y = transform.position.y;
+                System.Array.Sort(hits, (a, b) => a.distance.CompareTo(b.distance));
 
-                clickMoveTargetPosition = target;
-                isClickMoving = true;
+                foreach (var hit in hits)
+                {
+                    int layer = hit.collider.gameObject.layer;
+                    string layerName = LayerMask.LayerToName(layer);
+
+                    if (debugClickToMoveLayers)
+                    {
+                        Debug.Log($"[ClickToMove] Mouse click candidate hit '{hit.collider.gameObject.name}' on layer {layer} ('{layerName}') at {hit.point}");
+                    }
+
+                    // If this collider has a DisplayWallStandPoint, use that behaviour instead of generic click-move
+                    DisplayWall wallStandPoint = hit.collider.GetComponent<DisplayWall>();
+                    if (wallStandPoint != null)
+                    {
+                        if (debugClickToMoveLayers)
+                        {
+                            Debug.Log($"[ClickToMove] Mouse click activating DisplayWallStandPoint on '{hit.collider.gameObject.name}'");
+                        }
+                        wallStandPoint.FocusPlayer();
+                        return;
+                    }
+
+                    // If the first thing we run into is an ignored layer (e.g. Display Wall), block movement completely
+                    if (IsLayerInMask(layer, clickMoveIgnoreLayers))
+                    {
+                        if (debugClickToMoveLayers)
+                        {
+                            Debug.Log($"[ClickToMove] Mouse click blocked by ignored layer {layer} ('{layerName}')");
+                        }
+                        return;
+                    }
+
+                    // If it is a valid click-move layer, move there
+                    if (IsLayerInMask(layer, clickMoveLayerMask))
+                    {
+                        Vector3 target = hit.point;
+                        // Keep current character height so we don't snap vertically if the floor is uneven
+                        target.y = transform.position.y;
+
+                        clickMoveTargetPosition = target;
+                        isClickMoving = true;
+                        return;
+                    }
+                }
             }
         }
 
@@ -686,14 +776,56 @@ public class FirstPersonController : MonoBehaviour
                         continue;
 
                     Ray ray = playerCamera.ScreenPointToRay(touchUpPos);
-                    if (Physics.Raycast(ray, out RaycastHit hit, 100f, clickMoveLayerMask))
+                    int combinedMask = clickMoveLayerMask | clickMoveIgnoreLayers;
+                    RaycastHit[] hits = Physics.RaycastAll(ray, 100f, combinedMask);
+                    if (hits.Length > 0)
                     {
-                        Vector3 target = hit.point;
-                        // Keep current character height so we don't snap vertically if the floor is uneven
-                        target.y = transform.position.y;
+                        System.Array.Sort(hits, (a, b) => a.distance.CompareTo(b.distance));
 
-                        clickMoveTargetPosition = target;
-                        isClickMoving = true;
+                        foreach (var hit in hits)
+                        {
+                            int layer = hit.collider.gameObject.layer;
+                            string layerName = LayerMask.LayerToName(layer);
+
+                            if (debugClickToMoveLayers)
+                            {
+                                Debug.Log($"[ClickToMove] Touch tap candidate hit '{hit.collider.gameObject.name}' on layer {layer} ('{layerName}') at {hit.point}");
+                            }
+
+                            // If this collider has a DisplayWallStandPoint, use that behaviour instead of generic click-move
+                            DisplayWall wallStandPoint = hit.collider.GetComponent<DisplayWall>();
+                            if (wallStandPoint != null)
+                            {
+                                if (debugClickToMoveLayers)
+                                {
+                                    Debug.Log($"[ClickToMove] Touch tap activating DisplayWallStandPoint on '{hit.collider.gameObject.name}'");
+                                }
+                                wallStandPoint.FocusPlayer();
+                                return;
+                            }
+
+                            // If the first thing we run into is an ignored layer (e.g. Display Wall), block movement completely
+                            if (IsLayerInMask(layer, clickMoveIgnoreLayers))
+                            {
+                                if (debugClickToMoveLayers)
+                                {
+                                    Debug.Log($"[ClickToMove] Touch tap blocked by ignored layer {layer} ('{layerName}')");
+                                }
+                                return;
+                            }
+
+                            // If it is a valid click-move layer, move there
+                            if (IsLayerInMask(layer, clickMoveLayerMask))
+                            {
+                                Vector3 target = hit.point;
+                                // Keep current character height so we don't snap vertically if the floor is uneven
+                                target.y = transform.position.y;
+
+                                clickMoveTargetPosition = target;
+                                isClickMoving = true;
+                                break;
+                            }
+                        }
                     }
 
                     break;
@@ -758,4 +890,40 @@ public class FirstPersonController : MonoBehaviour
         CancelInvoke(nameof(HandleLegacyInput));
 #endif
     }
+
+    #region Public API for UI
+
+    // Basic movement
+    public float WalkSpeed { get => walkSpeed; set => walkSpeed = value; }
+    public float RunSpeed { get => runSpeed; set => runSpeed = value; }
+    public float GravityValue { get => gravity; set => gravity = value; }
+
+    // Mouse / touch look
+    public float MouseSensitivity { get => mouseSensitivity; set => mouseSensitivity = value; }
+    public float VerticalLookLimit { get => verticalLookLimit; set => verticalLookLimit = value; }
+    public bool InvertY { get => invertY; set => invertY = value; }
+    public bool InvertRotation { get => invertRotation; set => invertRotation = value; }
+    public float TouchSensitivity { get => touchSensitivity; set => touchSensitivity = value; }
+
+    // Game controls / mobile
+    public bool EnableGameControls { get => enableGameControls; set => enableGameControls = value; }
+    public bool UseNewMobileControl { get => useNewMobileControl; set => useNewMobileControl = value; }
+    public float PinchMoveSensitivity { get => pinchMoveSensitivity; set => pinchMoveSensitivity = value; }
+    public float PinchReferenceDistance { get => pinchReferenceDistance; set => pinchReferenceDistance = value; }
+    public float SwipeStrafeSensitivity { get => swipeStrafeSensitivity; set => swipeStrafeSensitivity = value; }
+    public float SwipeStrafeReferenceDistance { get => swipeStrafeReferenceDistance; set => swipeStrafeReferenceDistance = value; }
+
+    // Click-to-move
+    public bool EnableClickToMove { get => enableClickToMove; set => enableClickToMove = value; }
+    public float ClickMoveLerpSpeed { get => clickMoveLerpSpeed; set => clickMoveLerpSpeed = value; }
+    public float ClickMoveStopDistance { get => clickMoveStopDistance; set => clickMoveStopDistance = value; }
+    public float ClickMoveMaxClickDistance { get => clickMoveMaxClickDistance; set => clickMoveMaxClickDistance = value; }
+
+    // Mouse drag / smoothing
+    public bool RequireClickToRotate { get => requireClickToRotate; set => requireClickToRotate = value; }
+    public int MouseButtonForRotation { get => mouseButtonForRotation; set => mouseButtonForRotation = value; }
+    public float MovementSmoothing { get => movementSmoothing; set => movementSmoothing = value; }
+    public float LookSmoothing { get => lookSmoothing; set => lookSmoothing = value; }
+
+    #endregion
 }

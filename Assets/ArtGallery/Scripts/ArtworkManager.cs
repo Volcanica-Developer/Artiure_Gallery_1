@@ -42,6 +42,10 @@ public class ArtworkManager : MonoBehaviour
     [SerializeField] private float defaultWallDistance = 0.02f; // Distance from wall surface (in meters) - reduced for closer placement
     [SerializeField] private LayerMask wallLayer = 1 << 6; // Default layer 6 for walls
     
+    [Header("InchWall Placement Rules")]
+    [Tooltip("If true, placing on InchWall center will be blocked when the center is already occupied.")]
+    [SerializeField] private bool blockCenterPlacementWhenOccupied = true;
+    
     [Header("Custom Placement Transforms")]
     [SerializeField] private List<Transform> placementTransforms = new List<Transform>();
     [SerializeField] private bool useCustomTransforms = false; // If true, use placementTransforms instead of auto-placing on walls
@@ -249,8 +253,10 @@ public class ArtworkManager : MonoBehaviour
             return null;
         }
 
-        // Smart detection: if center already has an artwork, do not place another one
-        if (gridData.IsCenterOccupied())
+        // Optional rule: block placement when center is already occupied.
+        // This can be toggled off in the ArtworkManager inspector if you want to allow
+        // multiple artworks to be placed via the center helper.
+        if (blockCenterPlacementWhenOccupied && gridData.IsCenterOccupied())
         {
             Debug.LogError("ArtworkManager: InchWall center is already occupied. Cannot place another artwork in the center.");
             return null;
