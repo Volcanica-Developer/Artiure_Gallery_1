@@ -90,6 +90,9 @@ public class FirstPersonController : MonoBehaviour
     private Tween clickMoveMarkerTween;
     private int clickMoveTouchId = -1;
 
+    // Tween used to smoothly adjust camera pitch when snapping look direction (e.g. after focusing a wall)
+    private Tween lookPitchTween;
+
     // Split touch input (left = movement, right = look)
     private int leftTouchId = -1;
     private int rightTouchId = -1;
@@ -184,13 +187,15 @@ public class FirstPersonController : MonoBehaviour
 
         // Keyboard yaw (Q/E) for left/right rotation (desktop/WebGL)
         float keyboardLookX = 0f;
+        // Make Q/E independent of the InvertRotation setting by compensating for it here
+        float keyboardSign = invertRotation ? -1f : 1f;
         if (Input.GetKey(KeyCode.Q))
         {
-            keyboardLookX += 1f; // rotate left
+            keyboardLookX += 1f * keyboardSign; // rotate left
         }
         if (Input.GetKey(KeyCode.E))
         {
-            keyboardLookX -= 1f; // rotate right
+            keyboardLookX -= 1f * keyboardSign; // rotate right
         }
         if (Mathf.Abs(keyboardLookX) > 0.01f)
         {
@@ -582,6 +587,7 @@ public class FirstPersonController : MonoBehaviour
             isSwipeActive = false;
         }
 
+        // (Old) no-gyro path: only pinch + swipe affect movement/look here.
     }
 
     private bool IsLayerInMask(int layer, LayerMask mask)
@@ -924,6 +930,102 @@ public class FirstPersonController : MonoBehaviour
     public int MouseButtonForRotation { get => mouseButtonForRotation; set => mouseButtonForRotation = value; }
     public float MovementSmoothing { get => movementSmoothing; set => movementSmoothing = value; }
     public float LookSmoothing { get => lookSmoothing; set => lookSmoothing = value; }
+
+
+    /// <summary>
+    /// Clears movement/look inputs and velocities.
+    /// Call this before externally tweening the player (e.g., DisplayWall.FocusPlayer)
+    /// so there is no residual smoothed input that causes a small jerk when control resumes.
+    /// </summary>
+    public void ResetInputAndVelocity()
+    {
+        moveInput = Vector2.zero;
+        lookInput = Vector2.zero;
+        smoothedMoveInput = Vector2.zero;
+        smoothedLookInput = Vector2.zero;
+        velocity = Vector3.zero;
+
+        // Clear drag/touch state so no stale flags drive input on re-enable
+        isMouseDragging = false;
+        isMouseMovementDragging = false;
+        isTouching = false;
+        leftTouchId = -1;
+        rightTouchId = -1;
+        isPinchActive = false;
+        isSwipeActive = false;
+
+        // Also stop click-to-move if it happened to be active
+        isClickMoving = false;
+    }
+
+    /// <summary>
+    /// Instantly orients the player + camera so the camera looks directly at a world-space point.
+    /// Used after focusing a DisplayWall so the painting center is exactly in view.
+    /// </summary>
+    public void SnapLookAt(Vector3 worldPoint)
+    {
+        if (playerCamera == null)
+            return;
+
+        Vector3 camPos = playerCamera.transform.position;
+        Vector3 toTarget = worldPoint - camPos;
+        if (toTarget.sqrMagnitude < 0.0001f)
+            return;
+
+        // Full look rotation from camera to target
+        Quaternion lookRot = Quaternion.LookRotation(toTarget.normalized, Vector3.up);
+        Vector3 euler = lookRot.eulerAngles;
+
+        // Convert to signed pitch (-180..180) for clamping. We let yaw be handled elsewhere (e.g. DisplayWall tween).
+        float pitch = euler.x > 180f ? euler.x - 360f : euler.x;
+
+        // Apply pitch to camera (X axis), respecting vertical clamp
+        verticalRotation = Mathf.Clamp(pitch, -verticalLookLimit, verticalLookLimit);
+        playerCamera.transform.localRotation = Quaternion.Euler(verticalRotation, 0f, 0f);
+    }
+
+    /// <summary>
+    /// Smoothly adjusts the camera pitch so it looks at a world-space point over a short duration.
+    /// Used after a focus tween so the final adjustment is not a hard snap.
+    /// </summary>
+    public void SmoothLookAt(Vector3 worldPoint, float duration, Ease ease)
+    {
+        if (playerCamera == null)
+            return;
+
+        Vector3 camPos = playerCamera.transform.position;
+        Vector3 toTarget = worldPoint - camPos;
+        if (toTarget.sqrMagnitude < 0.0001f)
+            return;
+
+        // Desired look rotation from camera to target
+        Quaternion lookRot = Quaternion.LookRotation(toTarget.normalized, Vector3.up);
+        Vector3 euler = lookRot.eulerAngles;
+
+        // Target pitch in signed form (-180..180), then clamped to verticalLookLimit
+        float rawPitch = euler.x > 180f ? euler.x - 360f : euler.x;
+        float targetPitch = Mathf.Clamp(rawPitch, -verticalLookLimit, verticalLookLimit);
+
+        // Kill any previous pitch tween so we don't stack tweens
+        if (lookPitchTween != null && lookPitchTween.IsActive())
+        {
+            lookPitchTween.Kill();
+        }
+
+        float startPitch = verticalRotation;
+
+        lookPitchTween = DOTween.To(
+                () => startPitch,
+                v =>
+                {
+                    startPitch = v;
+                    verticalRotation = startPitch;
+                    playerCamera.transform.localRotation = Quaternion.Euler(verticalRotation, 0f, 0f);
+                },
+                targetPitch,
+                duration)
+            .SetEase(ease);
+    }
 
     #endregion
 }

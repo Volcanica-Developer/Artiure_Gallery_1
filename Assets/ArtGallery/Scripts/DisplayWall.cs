@@ -31,6 +31,7 @@ public class DisplayWall : MonoBehaviour
     public FirstPersonController playerController;
 
     [Header("Movement Tween")] 
+    [SerializeField] private bool useTween = true;
     [SerializeField] private float moveDuration = 0.75f;
     [SerializeField] private Ease moveEase = Ease.InOutSine;
 
@@ -62,6 +63,10 @@ public class DisplayWall : MonoBehaviour
         var controllerTransform = controller.transform;
         var characterController = controller.GetComponent<CharacterController>();
 
+        // Clear any residual movement / look input so there is no small jerk
+        // from smoothed input when control is returned after the tween.
+        controller.ResetInputAndVelocity();
+
         // Cancel any existing tween
         if (currentTween != null && currentTween.IsActive())
         {
@@ -71,6 +76,9 @@ public class DisplayWall : MonoBehaviour
 
         // Compute desired position and rotation
         Vector3 targetPosition = standingPoint.position;
+        // Keep the player's current Y so focusing a wall never changes vertical height.
+        targetPosition.y = controllerTransform.position.y;
+
         Vector3 lookPos = lookTarget != null ? lookTarget.position : transform.position;
         Vector3 flatDir = lookPos - targetPosition;
         flatDir.y = 0f;
@@ -78,35 +86,47 @@ public class DisplayWall : MonoBehaviour
             ? Quaternion.LookRotation(flatDir.normalized, Vector3.up)
             : controllerTransform.rotation;
 
-        bool reenableCC = false;
-        bool reenableController = false;
-
-        if (characterController != null && characterController.enabled)
+        // If tweening is disabled, snap instantly to the standing point / look direction.
+        if (!useTween)
         {
-            characterController.enabled = false;
-            reenableCC = true;
+            // Make sure physics doesn't fight with a teleport.
+            if (characterController != null)
+            {
+                bool wasEnabled = characterController.enabled;
+                characterController.enabled = false;
+                controllerTransform.SetPositionAndRotation(targetPosition, targetRotation);
+                characterController.enabled = wasEnabled;
+            }
+            else
+            {
+                controllerTransform.SetPositionAndRotation(targetPosition, targetRotation);
+            }
+
+            // Ensure controller is enabled for immediate input
+            if (!controller.enabled)
+            {
+                controller.enabled = true;
+            }
+
+            // After snapping position, also orient camera exactly toward the look target
+            controller.SnapLookAt(lookPos);
+
+            currentTween = null;
+            return;
         }
 
-        if (controller.enabled)
-        {
-            controller.enabled = false; // pause FirstPersonController update while tweening
-            reenableController = true;
-        }
-
-        // Tween position and rotation together
+        // Tween position and rotation together (keep controller enabled so it never appears disabled in Inspector)
         currentTween = DOTween.Sequence()
             .Join(controllerTransform.DOMove(targetPosition, moveDuration).SetEase(moveEase))
             .Join(controllerTransform.DORotateQuaternion(targetRotation, moveDuration).SetEase(moveEase))
             .OnComplete(() =>
             {
-                if (reenableCC && characterController != null)
+                // When the tween finishes, smoothly adjust camera pitch so it looks precisely at the painting center
+                if (controller != null)
                 {
-                    characterController.enabled = true;
-                }
-
-                if (reenableController && controller != null)
-                {
-                    controller.enabled = true;
+                    // Use a shorter duration than the main move so the final adjustment feels quick, not "settling".
+                    float pitchDuration = Mathf.Max(0.05f, moveDuration * 0.35f);
+                    controller.SmoothLookAt(lookPos, pitchDuration, moveEase);
                 }
 
                 currentTween = null;

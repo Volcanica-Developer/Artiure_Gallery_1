@@ -24,6 +24,10 @@ public class ArtworkFrame : MonoBehaviour, IPointerEnterHandler, IPointerExitHan
     
     [Header("Artwork Data")]
     [SerializeField] private ArtworkData artworkData;
+
+    [Header("Debug JSON Data")]
+    [Tooltip("Debug: PaintingConfigNew object coming from the JSON for this frame.")]
+    [SerializeField] private PaintingConfigNew debugPaintingData;
     
     [Header("Frame Settings (in Inches)")]
     [Tooltip("Bleeding (gap between artwork and frame inner edge) in inches.")]
@@ -34,6 +38,22 @@ public class ArtworkFrame : MonoBehaviour, IPointerEnterHandler, IPointerExitHan
 
     [Tooltip("Frame depth (Z-axis protrusion) in inches.")]
     [SerializeField] private float frameDepthInches = 0.5f;
+
+    [Header("Frame Editing Helpers")]
+    [Tooltip("Target OUTER width in inches for the 'Rebuild Frame To Outer Size' editor button.")]
+    [SerializeField, HideInInspector] private float editorTargetOuterWidthInches = 0f;
+
+    [Tooltip("Target OUTER height in inches for the 'Rebuild Frame To Outer Size' editor button.")]
+    [SerializeField, HideInInspector] private float editorTargetOuterHeightInches = 0f;
+
+    [Tooltip("If true, the frame editor will enforce an outer aspect ratio when rebuilding to outer size.")]
+    [SerializeField, HideInInspector] private bool editorUseAspectRatio = false;
+
+    [Tooltip("Aspect ratio width component (W in W:H) for outer size.")]
+    [SerializeField, HideInInspector] private float editorAspectWidth = 1f;
+
+    [Tooltip("Aspect ratio height component (H in W:H) for outer size.")]
+    [SerializeField, HideInInspector] private float editorAspectHeight = 1f;
 
     [Header("Inspector Edge-to-Edge Helper (Inches)")]
     [Tooltip("If enabled, use the custom next artwork outer size below when computing edge-to-edge offsets in the inspector.")]
@@ -88,6 +108,19 @@ public class ArtworkFrame : MonoBehaviour, IPointerEnterHandler, IPointerExitHan
     public System.Action<ArtworkData> OnArtworkClicked;
     public System.Action<ArtworkData> OnArtworkHovered;
     
+    /// <summary>
+    /// Exposes the JSON painting object that was assigned to this frame (for debugging).
+    /// </summary>
+    public PaintingConfigNew DebugPaintingData => debugPaintingData;
+
+    /// <summary>
+    /// Assigns the JSON painting object to this frame for debugging/inspection.
+    /// </summary>
+    public void SetDebugPaintingData(PaintingConfigNew painting)
+    {
+        debugPaintingData = painting;
+    }
+    
     private void Awake()
     {
         // originalScale = transform.localScale;
@@ -121,68 +154,89 @@ public class ArtworkFrame : MonoBehaviour, IPointerEnterHandler, IPointerExitHan
     // }
     
     /// <summary>
-    /// Sets the artwork to display in this frame.
+    /// Sets the artwork to display in this frame using the legacy ArtworkData pipeline.
+    /// This path can optionally resize the artwork plane and frame to match preferred size.
+    /// For the new JSON-driven exhibition pipeline, prefer SetTexture() instead so that
+    /// the prefab-authored size remains unchanged.
     /// </summary>
     public void SetArtwork(ArtworkData data)
     {
         artworkData = data;
-        
         if (artworkData == null) return;
-        
-        // Get or create artwork material
-        if (artworkMaterial != null)
-        {
-            artworkMatInstance = new Material(artworkMaterial);
-        }
-        else
-        {
-            artworkMatInstance = new Material(Shader.Find("Universal Render Pipeline/Lit"));
-        }
-        
-        // Set the texture
+
+        // Derive a texture from the ArtworkData
         Texture2D texture = artworkData.image;
         if (texture == null && artworkData.sprite != null)
         {
             texture = artworkData.sprite.texture;
         }
-        
-        if (texture != null)
-        {
-            artworkMatInstance.mainTexture = texture;
-            
-            // Calculate aspect ratio and adjust size
-            float aspectRatio = (float)texture.width / texture.height;
 
-            // Convert preferred size from inches to Unity units (meters) with high-precision utility
-            Vector2 sizeInches = artworkData.preferredSizeInches;
-            Vector2 size = new Vector2(sizeInches.x.FromInches(), sizeInches.y.FromInches());
-            
-            if (artworkData.maintainAspectRatio)
-            {
-                // Maintain aspect ratio, adjust height
-                size.y = size.x / aspectRatio;
-            }
-            
-            // Scale the artwork plane
-            if (artworkPlane != null)
-            {
-                artworkPlane.transform.localScale = new Vector3(size.x, size.y, 0.01f);
-                artworkPlane.transform.localPosition = new Vector3(0, 0, 0);
-            }
-        }
-        
-        // Apply material to artwork plane
-        if (artworkPlane != null)
+        // Use the generic texture-based path
+        SetTexture(texture);
+
+        // Optionally: if you still want ArtworkData to drive physical size, you can
+        // extend this method to adjust artworkPlane scale and call UpdateFrameSize().
+        // For the new exhibition flow, size is kept as defined in the prefab.
+    }
+
+    /// <summary>
+    /// Sets a texture on the artwork plane without modifying its scale.
+    /// This is the preferred method for the JSON exhibition pipeline: the
+    /// frame and artworkPlane keep whatever size is authored in the prefab.
+    /// </summary>
+    public void SetTexture(Texture2D texture)
+    {
+        if (artworkPlane == null)
         {
-            Renderer renderer = artworkPlane.GetComponent<Renderer>();
-            if (renderer != null)
+            // Ensure underlying geometry exists
+            SetupFrame();
+        }
+
+        if (texture == null)
+        {
+            ClearTexture();
+            return;
+        }
+
+        // Get or create artwork material
+        if (artworkMatInstance == null)
+        {
+            if (artworkMaterial != null)
             {
-                renderer.material = artworkMatInstance;
+                artworkMatInstance = new Material(artworkMaterial);
+            }
+            else
+            {
+                artworkMatInstance = new Material(Shader.Find("Universal Render Pipeline/Lit"));
             }
         }
-        
-        // Update frame size to match artwork
-        UpdateFrameSize();
+
+        artworkMatInstance.mainTexture = texture;
+
+        // Apply material to artwork plane
+        Renderer renderer = artworkPlane.GetComponent<Renderer>();
+        if (renderer != null)
+        {
+            renderer.material = artworkMatInstance;
+        }
+
+        // Important: DO NOT change artworkPlane scale or frame size here; these are
+        // now controlled by the prefab so all artworks in a layout use consistent size.
+    }
+
+    /// <summary>
+    /// Clears any texture from the artwork plane (used when there are more frames than paintings).
+    /// </summary>
+    public void ClearTexture()
+    {
+        if (artworkPlane == null)
+            return;
+
+        Renderer renderer = artworkPlane.GetComponent<Renderer>();
+        if (renderer != null && renderer.material != null && renderer.material.HasProperty("_MainTex"))
+        {
+            renderer.material.mainTexture = null;
+        }
     }
     
     private void SetupFrame()
@@ -234,6 +288,105 @@ public class ArtworkFrame : MonoBehaviour, IPointerEnterHandler, IPointerExitHan
         }
     }
     
+    /// <summary>
+    /// Rebuilds the frame pieces so that the OUTER size of the frame stays the same
+    /// (based on the current collider/frame mesh), but the inner artwork plane and
+    /// border positions are recomputed using the current bleeding/frameThickness.
+    ///
+    /// This means:
+    /// - if you DECREASE bleeding, the artwork area GROWS and the frame effectively
+    ///   moves outward to keep the same outer bounds;
+    /// - if you INCREASE bleeding, the artwork area shrinks accordingly but the
+    ///   outside size is unchanged.
+    /// </summary>
+    public void RebuildFrameFromArtwork()
+    {
+        if (artworkPlane == null)
+        {
+            Debug.LogWarning("ArtworkFrame: Cannot rebuild frame; artworkPlane is missing.");
+            return;
+        }
+
+        // Prefer the collider as the source of truth for current outer size in Unity units
+        float outerWidthUnits;
+        float outerHeightUnits;
+
+        BoxCollider col = GetComponent<BoxCollider>();
+        if (col != null)
+        {
+            outerWidthUnits = Mathf.Max(0.01f, col.size.x);
+            outerHeightUnits = Mathf.Max(0.01f, col.size.y);
+        }
+        else if (frameMesh != null)
+        {
+            Vector3 s = frameMesh.transform.localScale;
+            outerWidthUnits = Mathf.Max(0.01f, s.x);
+            outerHeightUnits = Mathf.Max(0.01f, s.y);
+        }
+        else
+        {
+            // Fallback: use logical outer size from artwork + bleeding + frameThickness
+            Vector2 outerInches = GetOuterSizeInches();
+            outerWidthUnits = Mathf.Max(0.01f, outerInches.x.FromInches());
+            outerHeightUnits = Mathf.Max(0.01f, outerInches.y.FromInches());
+        }
+
+        // Convert current bleeding/frame thickness to Unity units
+        float bleedingUnits = Mathf.Max(0f, bleedingInches).FromInches();
+        float frameThicknessUnits = Mathf.Max(0f, frameThicknessInches).FromInches();
+        float borderPerSideUnits = bleedingUnits + frameThicknessUnits;
+
+        // New artwork size in units so that outer stays the same:
+        // outer = artwork + 2 * borderPerSide  =>  artwork = outer - 2 * borderPerSide
+        float newArtWidthUnits = Mathf.Max(0.01f, outerWidthUnits - 2f * borderPerSideUnits);
+        float newArtHeightUnits = Mathf.Max(0.01f, outerHeightUnits - 2f * borderPerSideUnits);
+
+        Vector3 currentScale = artworkPlane.transform.localScale;
+        artworkPlane.transform.localScale = new Vector3(newArtWidthUnits, newArtHeightUnits, currentScale.z);
+        // Now recompute frame pieces/collider around the new artwork size.
+        UpdateFrameSize();
+    }
+
+    /// <summary>
+    /// Rebuilds the entire frame to a specific OUTER size, given in inches.
+    /// The new outer size is respected exactly (within unit conversion), and
+    /// the inner artwork is resized based on the current bleeding and frame
+    /// thickness.
+    /// </summary>
+    public void RebuildFrameToOuterSize(float targetOuterWidthInches, float targetOuterHeightInches)
+    {
+        if (artworkPlane == null)
+        {
+            Debug.LogWarning("ArtworkFrame: Cannot rebuild frame to outer size; artworkPlane is missing.");
+            return;
+        }
+
+        targetOuterWidthInches = Mathf.Max(0.01f, targetOuterWidthInches);
+        targetOuterHeightInches = Mathf.Max(0.01f, targetOuterHeightInches);
+
+        // Store for inspector convenience
+        editorTargetOuterWidthInches = targetOuterWidthInches;
+        editorTargetOuterHeightInches = targetOuterHeightInches;
+
+        float outerWidthUnits = targetOuterWidthInches.FromInches();
+        float outerHeightUnits = targetOuterHeightInches.FromInches();
+
+        float bleedingUnits = Mathf.Max(0f, bleedingInches).FromInches();
+        float frameThicknessUnits = Mathf.Max(0f, frameThicknessInches).FromInches();
+        float borderPerSideUnits = bleedingUnits + frameThicknessUnits;
+
+        // Compute artwork size from desired outer size
+        float newArtWidthUnits = Mathf.Max(0.01f, outerWidthUnits - 2f * borderPerSideUnits);
+        float newArtHeightUnits = Mathf.Max(0.01f, outerHeightUnits - 2f * borderPerSideUnits);
+
+        Vector3 currentScale = artworkPlane.transform.localScale;
+        artworkPlane.transform.localScale = new Vector3(newArtWidthUnits, newArtHeightUnits, currentScale.z);
+
+        // Refresh frame pieces and collider to match the new outer size
+        UpdateFrameSize();
+    }
+
+    /// <summary>
     private void UpdateFrameSize()
     {
         if (artworkData == null || artworkPlane == null) return;
@@ -393,11 +546,36 @@ public class ArtworkFrame : MonoBehaviour, IPointerEnterHandler, IPointerExitHan
         }
     }
 
-    /// <summary>
-    /// Returns the total outer size of this artwork+frame in inches as it appears on the wall.
-    /// Width/height are derived from the current artwork plane scale, then expanded by
-    /// bleeding + frame thickness on each side.
-    /// </summary>
+    public float EditorTargetOuterWidthInches
+    {
+        get => editorTargetOuterWidthInches;
+        set => editorTargetOuterWidthInches = Mathf.Max(0f, value);
+    }
+
+    public float EditorTargetOuterHeightInches
+    {
+        get => editorTargetOuterHeightInches;
+        set => editorTargetOuterHeightInches = Mathf.Max(0f, value);
+    }
+
+    public bool EditorUseAspectRatio
+    {
+        get => editorUseAspectRatio;
+        set => editorUseAspectRatio = value;
+    }
+
+    public float EditorAspectWidth
+    {
+        get => editorAspectWidth;
+        set => editorAspectWidth = Mathf.Max(0.0001f, value);
+    }
+
+    public float EditorAspectHeight
+    {
+        get => editorAspectHeight;
+        set => editorAspectHeight = Mathf.Max(0.0001f, value);
+    }
+
     public Vector2 GetOuterSizeInches()
     {
         if (artworkPlane == null)
