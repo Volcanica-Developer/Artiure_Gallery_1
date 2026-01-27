@@ -56,15 +56,15 @@ public class GyroRotate : MonoBehaviour
         Vector3 tLocationRotation = transform.localRotation.eulerAngles;
         tLocationRotation -= delta * 5 * cardScreenGyroSpeed;
 
-        if (tLocationRotation.y >= cardRotationLimits.x && tLocationRotation.y < 180f)
-            tLocationRotation.y = cardRotationLimits.x;
-        else if (tLocationRotation.y <= cardRotationLimits.y && tLocationRotation.y > 180f)
-            tLocationRotation.y = cardRotationLimits.y;
+        //if (tLocationRotation.y >= cardRotationLimits.x && tLocationRotation.y < 180f)
+        //    tLocationRotation.y = cardRotationLimits.x;
+        //else if (tLocationRotation.y <= cardRotationLimits.y && tLocationRotation.y > 180f)
+        //    tLocationRotation.y = cardRotationLimits.y;
 
-        if (tLocationRotation.x >= cardRotationLimits.z && tLocationRotation.x < 180f)
-            tLocationRotation.x = cardRotationLimits.z;
-        else if (tLocationRotation.x <= cardRotationLimits.w && tLocationRotation.x > 180f)
-            tLocationRotation.x = cardRotationLimits.w;
+        //if (tLocationRotation.x >= cardRotationLimits.z && tLocationRotation.x < 180f)
+        //    tLocationRotation.x = cardRotationLimits.z;
+        //else if (tLocationRotation.x <= cardRotationLimits.w && tLocationRotation.x > 180f)
+        //    tLocationRotation.x = cardRotationLimits.w;
 
         tLocationRotation.z = 0f;
 
