@@ -1,6 +1,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Text;
 using UnityEngine;
 using UnityEngine.Networking;
 using Newtonsoft.Json;
@@ -28,12 +29,16 @@ public class ArtworkManagerNew : MonoBehaviour
     [SerializeField] private string resourcesJsonPath = "ArtworkConfig_New"; // Resources/ArtworkConfig_New.json
 
     [Header("API Configuration")]
-    [SerializeField] private string apiUrl = "https://api.example.com/exhibitions"; // replace with real endpoint
+    [SerializeField] private string apiUrl = "https://stg.artiure.com/api/artist/exhibition/getExhibitionFromId";
+
+    [Tooltip("Exhibition UUID to request from the API. For now this can be hard-coded; later it can come from user selection.")]
+    [SerializeField] private string exhibitionId = "e459a070-3f67-4624-8d33-4dc33d1d6af0";
+
     [SerializeField] private float apiTimeoutSeconds = 10f;
 
     [Header("Auto Setup")]
     [Tooltip("If true, automatically load data on startup.")]
-    [SerializeField] private bool loadOnAwake = true;
+    [SerializeField] private bool loadOnAwake = false; // Default off; will be triggered from UI.
 
     [Tooltip("Delay (in seconds) before automatically loading and building layouts when loadOnAwake is true.")]
     [SerializeField] private float autoSetupDelaySeconds = 0.5f;
@@ -59,6 +64,10 @@ public class ArtworkManagerNew : MonoBehaviour
     [Tooltip("Prefabs that contain a FrameLayout component, one per JSON layoutId (e.g. layout_28).")]
     [SerializeField] private List<FrameLayout> layoutPrefabs = new List<FrameLayout>();
 
+    [Header("Image Download Progress")]
+    [SerializeField] private int totalImagesToDownload = 0;
+    [SerializeField] private int downloadedImagesCount = 0;
+
     /// <summary>
     /// The last successfully parsed configuration.
     /// </summary>
@@ -68,6 +77,38 @@ public class ArtworkManagerNew : MonoBehaviour
     /// All DisplayWall components currently registered with this manager.
     /// </summary>
     public IReadOnlyList<DisplayWall> DisplayWallList => displayWalls;
+
+    /// <summary>
+    /// Total number of images expected to be downloaded for the current config.
+    /// </summary>
+    public int TotalImagesToDownload => totalImagesToDownload;
+
+    /// <summary>
+    /// Number of images that have finished downloading (successfully or failed).
+    /// </summary>
+    public int DownloadedImagesCount => downloadedImagesCount;
+
+    /// <summary>
+    /// Normalized download progress in [0,1]. Returns 0 if there are no images.
+    /// </summary>
+    public float DownloadProgress => totalImagesToDownload <= 0 ? 0f : (float)downloadedImagesCount / totalImagesToDownload;
+
+    /// <summary>
+    /// Raised when we have counted how many images need to be downloaded for the current config.
+    /// Argument is the total number of images.
+    /// </summary>
+    public event Action<int> OnImageDownloadStarted;
+
+    /// <summary>
+    /// Raised every time an image finishes downloading (successfully or with error).
+    /// Arguments are (completedCount, totalCount).
+    /// </summary>
+    public event Action<int, int> OnImageDownloadProgress;
+
+    /// <summary>
+    /// Raised once when all expected images for the current config have finished downloading.
+    /// </summary>
+    public event Action OnAllImagesDownloaded;
 
     private void Awake()
     {
@@ -125,6 +166,21 @@ public class ArtworkManagerNew : MonoBehaviour
         }
     }
 
+    /// <summary>
+    /// Explicitly starts loading from the API regardless of the useAPI flag.
+    /// Can be wired to a UI button to force API loading.
+    /// </summary>
+    public void LoadFromAPIButton()
+    {
+        if (isLoading)
+        {
+            Debug.LogWarning("ArtworkManagerNew: Already loading, ignoring LoadFromAPIButton() call.");
+            return;
+        }
+
+        StartCoroutine(LoadFromAPI());
+    }
+
     #region Loading from Resources
 
     /// <summary>
@@ -177,11 +233,26 @@ public class ArtworkManagerNew : MonoBehaviour
             yield break;
         }
 
-        Debug.Log($"ArtworkManagerNew: Loading exhibition data from API: {apiUrl}");
-
-        using (UnityWebRequest request = UnityWebRequest.Get(apiUrl))
+        if (string.IsNullOrEmpty(exhibitionId))
         {
-            // Apply custom headers if any
+            Debug.LogError("ArtworkManagerNew: exhibitionId is not set. Cannot load exhibition from API.");
+            isLoading = false;
+            yield break;
+        }
+
+        Debug.Log($"ArtworkManagerNew: Loading exhibition data from API: {apiUrl} with id={exhibitionId}");
+
+        // Build JSON body expected by the endpoint: { "id": "<uuid>" }
+        string requestBody = JsonConvert.SerializeObject(new { id = exhibitionId });
+        byte[] bodyRaw = Encoding.UTF8.GetBytes(requestBody);
+
+        using (UnityWebRequest request = new UnityWebRequest(apiUrl, UnityWebRequest.kHttpVerbPOST))
+        {
+            request.uploadHandler = new UploadHandlerRaw(bodyRaw);
+            request.downloadHandler = new DownloadHandlerBuffer();
+            request.SetRequestHeader("Content-Type", "application/json");
+
+            // Apply custom headers if any (e.g. Authorization)
             if (apiHeaders != null)
             {
                 foreach (var header in apiHeaders)
@@ -273,10 +344,15 @@ public class ArtworkManagerNew : MonoBehaviour
             currentConfig = parsed;
             lastLoadSucceeded = true;
 
+            // Count how many images we expect to download for this config so UI can track progress.
+            totalImagesToDownload = CountImagesToDownload();
+            downloadedImagesCount = 0;
+            OnImageDownloadStarted?.Invoke(totalImagesToDownload);
+
             int exhibitionCount = currentConfig.data != null ? currentConfig.data.Count : 0;
             int totalPaintings = GetAllPaintings().Count;
 
-            Debug.Log($"ArtworkManagerNew: Loaded config from {sourceDescription}. success={currentConfig.success}, exhibitions={exhibitionCount}, paintings={totalPaintings}.");
+            Debug.Log($"ArtworkManagerNew: Loaded config from {sourceDescription}. success={currentConfig.success}, exhibitions={exhibitionCount}, paintings={totalPaintings}, imagesToDownload={totalImagesToDownload}.");
 
             // Automatically build layouts and populate them with images sequentially
             StartCoroutine(BuildLayoutsAndImagesSequentially());
@@ -316,6 +392,38 @@ public class ArtworkManagerNew : MonoBehaviour
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Counts how many images we will attempt to download based on the currentConfig.
+    /// Only HTTP(S) mainImage URLs are counted (matching LoadTextureIntoFrame's conditions).
+    /// </summary>
+    private int CountImagesToDownload()
+    {
+        if (currentConfig?.data == null)
+            return 0;
+
+        int count = 0;
+        foreach (var exhibition in currentConfig.data)
+        {
+            if (exhibition?.walls?.paintings == null)
+                continue;
+
+            foreach (var painting in exhibition.walls.paintings)
+            {
+                string url = painting?.mainImage != null ? painting.mainImage.src : null;
+                if (string.IsNullOrEmpty(url))
+                    continue;
+
+                if (url.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+                    url.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+                {
+                    count++;
+                }
+            }
+        }
+
+        return count;
     }
 
     /// <summary>
@@ -771,15 +879,24 @@ public class ArtworkManagerNew : MonoBehaviour
 
     /// <summary>
     /// Downloads an image from a URL and assigns it to the given ArtworkFrame's texture.
+    /// Also updates download progress counters and fires progress events.
     /// </summary>
     private IEnumerator LoadTextureIntoFrame(string imageUrl, ArtworkFrame frame)
     {
         if (frame == null)
             yield break;
 
+        bool willCountThisImage = !string.IsNullOrEmpty(imageUrl) &&
+                                  (imageUrl.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+                                   imageUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase));
+
         if (string.IsNullOrEmpty(imageUrl))
         {
             frame.ClearTexture();
+            if (willCountThisImage)
+            {
+                IncrementDownloadProgress();
+            }
             yield break;
         }
 
@@ -788,6 +905,10 @@ public class ArtworkManagerNew : MonoBehaviour
             !imageUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
         {
             Debug.LogWarning($"ArtworkManagerNew: Image URL '{imageUrl}' is not an HTTP(S) URL. Skipping.");
+            if (willCountThisImage)
+            {
+                IncrementDownloadProgress();
+            }
             yield break;
         }
 
@@ -798,7 +919,11 @@ public class ArtworkManagerNew : MonoBehaviour
 
         yield return imageRequest.SendWebRequest();
 
+#if UNITY_2020_2_OR_NEWER
         if (imageRequest.result == UnityWebRequest.Result.Success)
+#else
+        if (!imageRequest.isNetworkError && !imageRequest.isHttpError)
+#endif
         {
             Texture2D texture = DownloadHandlerTexture.GetContent(imageRequest);
             texture = FlipTextureVertically(texture);
@@ -811,6 +936,25 @@ public class ArtworkManagerNew : MonoBehaviour
         }
 
         imageRequest.Dispose();
+
+        if (willCountThisImage)
+        {
+            IncrementDownloadProgress();
+        }
+    }
+
+    /// <summary>
+    /// Increments the downloaded image counter and fires progress / completion events.
+    /// </summary>
+    private void IncrementDownloadProgress()
+    {
+        downloadedImagesCount = Mathf.Clamp(downloadedImagesCount + 1, 0, Mathf.Max(downloadedImagesCount + 1, totalImagesToDownload));
+        OnImageDownloadProgress?.Invoke(downloadedImagesCount, totalImagesToDownload);
+
+        if (totalImagesToDownload > 0 && downloadedImagesCount >= totalImagesToDownload)
+        {
+            OnAllImagesDownloaded?.Invoke();
+        }
     }
 
     /// <summary>
