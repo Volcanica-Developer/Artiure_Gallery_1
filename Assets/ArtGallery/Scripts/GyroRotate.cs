@@ -51,6 +51,16 @@ public class GyroRotate : MonoBehaviour
         Vector3 tGyroRotation = Input.gyro.rotationRateUnbiased;
         //Log.Debug("gyro rate: " + tGyroRotation);
         delta = tGyroRotation;
+
+        // In landscape mode the device axes are effectively swapped relative to the UI.
+        // Swap X and Y so that horizontal phone movement still maps to horizontal rotation.
+        if (Screen.orientation == ScreenOrientation.LandscapeLeft || Screen.orientation == ScreenOrientation.LandscapeRight)
+        {
+            float tmp = delta.x;
+            delta.x = delta.y;
+            delta.y = tmp;
+        }
+
         delta.z = 0f;
 
         Vector3 tLocationRotation = transform.localRotation.eulerAngles;

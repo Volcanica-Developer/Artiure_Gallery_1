@@ -64,9 +64,16 @@ public class ArtworkManagerNew : MonoBehaviour
     [Tooltip("Prefabs that contain a FrameLayout component, one per JSON layoutId (e.g. layout_28).")]
     [SerializeField] private List<FrameLayout> layoutPrefabs = new List<FrameLayout>();
 
-    [Header("Image Download Progress")]
-    [SerializeField] private int totalImagesToDownload = 0;
-    [SerializeField] private int downloadedImagesCount = 0;
+		[Header("Image Download Progress")]
+		[SerializeField] private int totalImagesToDownload = 0;
+		[SerializeField] private int downloadedImagesCount = 0;
+
+		[Header("Music")]
+		[Tooltip("Optional AudioSource used to play exhibition music fetched from the API.")]
+		[SerializeField] private AudioSource musicAudioSource;
+
+		[Tooltip("Last downloaded/assigned music clip from the exhibition data.")]
+		[SerializeField] private AudioClip currentMusicClip;
 
     /// <summary>
     /// The last successfully parsed configuration.
@@ -324,44 +331,195 @@ public class ArtworkManagerNew : MonoBehaviour
     /// kick off a sequential coroutine that instantiates layouts and populates
     /// them with images, one exhibition at a time.
     /// </summary>
-    private void ParseAndStoreConfig(string json, string sourceDescription)
-    {
-        if (string.IsNullOrWhiteSpace(json))
-        {
-            Debug.LogError($"ArtworkManagerNew: Received empty JSON from {sourceDescription}.");
-            return;
-        }
+		private void ParseAndStoreConfig(string json, string sourceDescription)
+		{
+			if (string.IsNullOrWhiteSpace(json))
+			{
+				Debug.LogError($"ArtworkManagerNew: Received empty JSON from {sourceDescription}.");
+				return;
+			}
 
-        try
-        {
-            var parsed = JsonConvert.DeserializeObject<ArtworkConfigNew>(json);
-            if (parsed == null)
-            {
-                Debug.LogError($"ArtworkManagerNew: Failed to parse JSON from {sourceDescription} into ArtworkConfigNew.");
-                return;
-            }
+			try
+			{
+				var parsed = JsonConvert.DeserializeObject<ArtworkConfigNew>(json);
+				if (parsed == null)
+				{
+					Debug.LogError($"ArtworkManagerNew: Failed to parse JSON from {sourceDescription} into ArtworkConfigNew.");
+					return;
+				}
 
-            currentConfig = parsed;
-            lastLoadSucceeded = true;
+				currentConfig = parsed;
+				lastLoadSucceeded = true;
 
-            // Count how many images we expect to download for this config so UI can track progress.
-            totalImagesToDownload = CountImagesToDownload();
-            downloadedImagesCount = 0;
-            OnImageDownloadStarted?.Invoke(totalImagesToDownload);
+				// As soon as we have valid config, try to start exhibition music (if any "music" field is present).
+				TryStartExhibitionMusic();
 
-            int exhibitionCount = currentConfig.data != null ? currentConfig.data.Count : 0;
-            int totalPaintings = GetAllPaintings().Count;
+				// Count how many images we expect to download for this config so UI can track progress.
+				totalImagesToDownload = CountImagesToDownload();
+				downloadedImagesCount = 0;
+				OnImageDownloadStarted?.Invoke(totalImagesToDownload);
 
-            Debug.Log($"ArtworkManagerNew: Loaded config from {sourceDescription}. success={currentConfig.success}, exhibitions={exhibitionCount}, paintings={totalPaintings}, imagesToDownload={totalImagesToDownload}.");
+				int exhibitionCount = currentConfig.data != null ? currentConfig.data.Count : 0;
+				int totalPaintings = GetAllPaintings().Count;
 
-            // Automatically build layouts and populate them with images sequentially
-            StartCoroutine(BuildLayoutsAndImagesSequentially());
-        }
-        catch (Exception ex)
-        {
-            Debug.LogError($"ArtworkManagerNew: Exception while parsing JSON from {sourceDescription}: {ex.Message}\\n{ex.StackTrace}");
-        }
-    }
+				Debug.Log($"ArtworkManagerNew: Loaded config from {sourceDescription}. success={currentConfig.success}, exhibitions={exhibitionCount}, paintings={totalPaintings}, imagesToDownload={totalImagesToDownload}.");
+
+				// Automatically build layouts and populate them with images sequentially
+				StartCoroutine(BuildLayoutsAndImagesSequentially());
+			}
+			catch (Exception ex)
+			{
+				Debug.LogError($"ArtworkManagerNew: Exception while parsing JSON from {sourceDescription}: {ex.Message}\\n{ex.StackTrace}");
+			}
+		}
+
+		/// <summary>
+		/// Looks for a non-empty music URL in the current exhibition config and, if found,
+		/// downloads and plays it through an AudioSource.
+		/// </summary>
+		private void TryStartExhibitionMusic()
+		{
+			string musicUrl = FindFirstMusicUrlFromConfig();
+			if (string.IsNullOrEmpty(musicUrl))
+			{
+				Debug.Log("ArtworkManagerNew: No music field found in exhibition data.");
+				return;
+			}
+
+			// Stop currently playing music (if any) before starting new one.
+			if (musicAudioSource != null && musicAudioSource.isPlaying)
+			{
+				musicAudioSource.Stop();
+			}
+
+			StartCoroutine(LoadAndPlayMusicFromUrl(musicUrl));
+		}
+
+		/// <summary>
+		/// Scans all exhibitions in the current config and returns the first non-empty
+		/// music URL it finds. This assumes the API returns a string field named "music"
+		/// on each exhibition object.
+		/// </summary>
+		private string FindFirstMusicUrlFromConfig()
+		{
+			if (currentConfig?.data == null)
+			{
+				return null;
+			}
+
+			foreach (var exhibition in currentConfig.data)
+			{
+				if (exhibition == null)
+				{
+					continue;
+				}
+
+				if (!string.IsNullOrEmpty(exhibition.music))
+				{
+					return exhibition.music;
+				}
+			}
+
+			return null;
+		}
+
+		/// <summary>
+		/// Downloads an audio clip from the given URL and plays it using an AudioSource.
+		/// The clip is stored in <see cref="currentMusicClip"/> so it can be reused if needed.
+		/// </summary>
+		private IEnumerator LoadAndPlayMusicFromUrl(string musicUrl)
+		{
+			if (string.IsNullOrEmpty(musicUrl))
+			{
+				yield break;
+			}
+
+			// Ensure we have an AudioSource to play music on.
+			if (musicAudioSource == null)
+			{
+				musicAudioSource = gameObject.GetComponent<AudioSource>();
+				if (musicAudioSource == null)
+				{
+					musicAudioSource = gameObject.AddComponent<AudioSource>();
+				}
+			}
+
+			// Basic heuristic: if the URL ends with .wav use WAV, otherwise assume MP3.
+			AudioType audioType = AudioType.MPEG;
+			string lowerUrl = musicUrl.ToLowerInvariant();
+			if (lowerUrl.EndsWith(".wav"))
+			{
+				audioType = AudioType.WAV;
+			}
+
+			Debug.Log($"ArtworkManagerNew: Loading exhibition music from URL: {musicUrl}");
+
+			using (UnityWebRequest musicRequest = UnityWebRequestMultimedia.GetAudioClip(musicUrl, audioType))
+			{
+				musicRequest.timeout = Mathf.CeilToInt(apiTimeoutSeconds);
+				yield return musicRequest.SendWebRequest();
+
+#if UNITY_2020_2_OR_NEWER
+				if (musicRequest.result != UnityWebRequest.Result.Success)
+#else
+				if (musicRequest.isNetworkError || musicRequest.isHttpError)
+#endif
+				{
+					Debug.LogError($"ArtworkManagerNew: Failed to load music from URL: {musicUrl}. Error: {musicRequest.error}");
+					yield break;
+				}
+
+				currentMusicClip = DownloadHandlerAudioClip.GetContent(musicRequest);
+			}
+
+			if (currentMusicClip == null)
+			{
+				Debug.LogError("ArtworkManagerNew: Music request succeeded but returned null AudioClip.");
+				yield break;
+			}
+
+			musicAudioSource.clip = currentMusicClip;
+			musicAudioSource.loop = true;
+			musicAudioSource.Play();
+		}
+
+		/// <summary>
+		/// Toggles the exhibition music on/off.
+		/// - If music is currently playing, it will be stopped.
+		/// - If music is not playing, it will either resume the existing clip or
+		///   (if none is loaded yet) start loading/playing from the exhibition's music URL.
+		/// </summary>
+		public void ToggleExhibitionMusic()
+		{
+			// Ensure we have an AudioSource reference if one already exists on this GameObject.
+			if (musicAudioSource == null)
+			{
+				musicAudioSource = gameObject.GetComponent<AudioSource>();
+			}
+
+			// Case 1: We already have an AudioSource and a clip assigned.
+			if (musicAudioSource != null && musicAudioSource.clip != null)
+			{
+				if (musicAudioSource.isPlaying)
+				{
+					// Stop current playback.
+					musicAudioSource.Stop();
+				}
+				else
+				{
+					// Start (or restart) playback from the beginning.
+					musicAudioSource.Play();
+				}
+				return;
+			}
+
+			// Case 2: No clip loaded yet, but we have config data. Attempt to load
+			// and start playing from the exhibition's music URL.
+			if (currentConfig != null)
+			{
+				TryStartExhibitionMusic();
+			}
+		}
 
     /// <summary>
     /// Returns all exhibitions from the current config. Never returns null (returns empty list instead).
@@ -998,13 +1156,20 @@ public class ArtworkConfigNew
 [Serializable]
 public class ExhibitionConfigNew
 {
-    public string _id;
-    public string uuid;
-    public string name;
-    public string description;
-    public string slug;
-    public string status;
-    public WallsConfigNew walls;
+	public string _id;
+	public string uuid;
+	public string name;
+	public string description;
+
+	/// <summary>
+	/// Optional music clip URL associated with this exhibition. This is expected to be
+	/// provided by the getExhibitionFromId API under the field name "music".
+	/// </summary>
+	public string music;
+
+	public string slug;
+	public string status;
+	public WallsConfigNew walls;
 }
 
 /// <summary>

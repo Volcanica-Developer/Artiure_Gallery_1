@@ -27,6 +27,12 @@ public class InformationScreenRouter : MonoBehaviour
     [Tooltip("When overridePlatform is true, treat runtime as mobile when this is true.")]
     [SerializeField] private bool forceMobile = false;
 
+    [Header("Runtime Behaviour")]
+    [Tooltip("If true, logs when the active information screen manager changes due to orientation/platform.")]
+    [SerializeField] private bool logActiveManagerChanges = false;
+
+    private InformationScreenUiManager _lastActiveManager;
+
     private void Awake()
     {
         if (Instance != null && Instance != this)
@@ -37,6 +43,39 @@ public class InformationScreenRouter : MonoBehaviour
         }
 
         Instance = this;
+
+        // Initialize cached active manager.
+        _lastActiveManager = GetActiveManager();
+    }
+
+    private void Update()
+    {
+        // Detect changes in platform/orientation at runtime and react.
+        var current = GetActiveManager();
+        if (current != _lastActiveManager)
+        {
+            if (logActiveManagerChanges)
+            {
+                Debug.Log($"[InformationScreenRouter] Active manager changed from '{FormatManagerName(_lastActiveManager)}' to '{FormatManagerName(current)}'.", this);
+            }
+
+            // If we switch managers and the previous one had a painting, copy it over.
+            if (_lastActiveManager != null && current != null)
+            {
+                var painting = _lastActiveManager.GetCurrentPainting();
+                if (painting != null)
+                {
+                    current.SetPainting(painting);
+                }
+            }
+
+            _lastActiveManager = current;
+        }
+    }
+
+    private static string FormatManagerName(InformationScreenUiManager mgr)
+    {
+        return mgr == null ? "null" : mgr.name;
     }
 
     /// <summary>
@@ -46,6 +85,18 @@ public class InformationScreenRouter : MonoBehaviour
     public InformationScreenUiManager GetActiveManager()
     {
         bool isMobile = overridePlatform ? forceMobile : Application.isMobilePlatform;
+
+        // If we're on a mobile device but currently in landscape, treat it like desktop
+        // for the purposes of the information screen.
+        bool isLandscapeOnMobile = isMobile &&
+                                   (Screen.orientation == ScreenOrientation.LandscapeLeft ||
+                                    Screen.orientation == ScreenOrientation.LandscapeRight);
+
+        if (isLandscapeOnMobile)
+        {
+            // Force use of the desktop manager when in landscape on mobile.
+            return desktopManager != null ? desktopManager : mobileManager;
+        }
 
         if (isMobile)
         {

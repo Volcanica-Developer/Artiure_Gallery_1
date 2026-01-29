@@ -19,23 +19,42 @@ public class CanvasPlatformSwitcher : MonoBehaviour
         ApplyPlatformCanvases();
     }
 
+    private void OnEnable()
+    {
+        ApplyPlatformCanvases();
+    }
+
+    private void Update()
+    {
+        // Re-apply whenever orientation might have changed at runtime.
+        ApplyPlatformCanvases();
+    }
+
     /// <summary>
     /// Applies the platform-specific canvas visibility.
     /// On WebGL, Application.isMobilePlatform is true on mobile browsers
     /// (Android / iOS) and false on desktop browsers.
+    /// In mobile landscape we intentionally show the desktop canvas.
     /// </summary>
     private void ApplyPlatformCanvases()
     {
         bool isMobile = Application.isMobilePlatform;
+        bool isLandscapeOnMobile = isMobile &&
+                                   (Screen.orientation == ScreenOrientation.LandscapeLeft ||
+                                    Screen.orientation == ScreenOrientation.LandscapeRight);
+
+        // In landscape on mobile, treat as desktop UI.
+        bool useDesktop = !isMobile || isLandscapeOnMobile;
+        bool useMobile = isMobile && !isLandscapeOnMobile;
 
         if (desktopCanvas != null)
         {
-            desktopCanvas.SetActive(!isMobile);
+            desktopCanvas.SetActive(useDesktop);
         }
 
         if (mobileCanvas != null)
         {
-            mobileCanvas.SetActive(isMobile);
+            mobileCanvas.SetActive(useMobile);
         }
     }
 }
