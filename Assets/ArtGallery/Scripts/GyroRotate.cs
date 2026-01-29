@@ -1,4 +1,4 @@
-using System.Collections;
+﻿using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -78,5 +78,24 @@ public class GyroRotate : MonoBehaviour
     private static Quaternion GyroToUnity(Quaternion q)
     {
         return new Quaternion(q.x, q.y, -q.z, -q.w);
+    }
+
+    public void AllowGyroscope()
+    {
+        // User agreed: enable gyro (optionally wrap with UNITY_IOS)
+#if UNITY_IOS && !UNITY_EDITOR
+        if (SystemInfo.supportsGyroscope)
+        {
+            Input.gyro.enabled = true;
+            Debug.Log("Gyroscope enabled on iOS.");
+        }
+        else
+        {
+            Debug.LogWarning("Gyroscope not supported on this device.");
+        }
+#else
+        Debug.Log("Gyro allowed (non‑iOS / Editor).");
+#endif
+
     }
 }

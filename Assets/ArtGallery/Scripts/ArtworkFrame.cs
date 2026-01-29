@@ -98,6 +98,10 @@ public class ArtworkFrame : MonoBehaviour, IPointerEnterHandler, IPointerExitHan
     // Hover scale disabled - artworks spawn without scaling effects
     // [SerializeField] private float hoverScale = 1.05f;
     // [SerializeField] private float hoverTransitionSpeed = 5f;
+
+    [Header("Info Screen Interaction (New JSON)")]
+    [Tooltip("Maximum horizontal distance (in meters) between the player and the frame's standing position on the wall to treat a click as an 'info' click.")]
+    [SerializeField] private float infoClickMaxDistance = 0.1f;
     
     private Material artworkMatInstance;
     // private Vector3 originalScale;
@@ -534,7 +538,37 @@ public class ArtworkFrame : MonoBehaviour, IPointerEnterHandler, IPointerExitHan
     
     public void OnPointerClick(PointerEventData eventData)
     {
+        // Legacy pipeline: still forward ArtworkData-based click events.
         OnArtworkClicked?.Invoke(artworkData);
+
+        // New JSON pipeline: when the player clicks this frame, send the PaintingConfigNew
+        // for this frame to the active Information UI (desktop or mobile).
+        TrySendJsonPaintingToInformationScreen();
+    }
+
+    /// <summary>
+    /// New JSON-driven exhibition pipeline: as soon as this frame is clicked (via
+    /// pointer interaction), push its PaintingConfigNew into the appropriate
+    /// information UI (desktop or mobile) using InformationScreenRouter if present.
+    /// </summary>
+    private void TrySendJsonPaintingToInformationScreen()
+    {
+        // Require JSON painting data on this frame.
+        if (debugPaintingData == null)
+            return;
+
+        // Prefer the router so we can choose between desktop and mobile UIs via inspector.
+        if (InformationScreenRouter.Instance != null)
+        {
+            InformationScreenRouter.Instance.SetPaintingOnActive(debugPaintingData);
+            return;
+        }
+
+        // Fallback: direct singleton if no router is configured.
+        if (InformationScreenUiManager.Instance != null)
+        {
+            InformationScreenUiManager.Instance.SetPainting(debugPaintingData);
+        }
     }
     
     private void OnDestroy()

@@ -1893,7 +1893,7 @@ GameObject:
   - component: {fileID: 1181005531777141515}
   m_Layer: 0
   m_Name: Frame_10
-  m_TagString: Untagged
+  m_TagString: Frame
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
