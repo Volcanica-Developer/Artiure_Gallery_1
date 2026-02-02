@@ -454,34 +454,43 @@ public class ArtworkManagerNew : MonoBehaviour
 
 			Debug.Log($"ArtworkManagerNew: Loading exhibition music from URL: {musicUrl}");
 
-			using (UnityWebRequest musicRequest = UnityWebRequestMultimedia.GetAudioClip(musicUrl, audioType))
-			{
-				musicRequest.timeout = Mathf.CeilToInt(apiTimeoutSeconds);
-				yield return musicRequest.SendWebRequest();
+            // Check cache first to avoid re-downloading the same music clip.
+            if (WebGLMediaCache.TryGetAudioClip(musicUrl, out var cachedClip))
+            {
+                currentMusicClip = cachedClip;
+            }
+            else
+            {
+                using (UnityWebRequest musicRequest = UnityWebRequestMultimedia.GetAudioClip(musicUrl, audioType))
+                {
+                    musicRequest.timeout = Mathf.CeilToInt(apiTimeoutSeconds);
+                    yield return musicRequest.SendWebRequest();
 
 #if UNITY_2020_2_OR_NEWER
-				if (musicRequest.result != UnityWebRequest.Result.Success)
+                    if (musicRequest.result != UnityWebRequest.Result.Success)
 #else
-				if (musicRequest.isNetworkError || musicRequest.isHttpError)
+                    if (musicRequest.isNetworkError || musicRequest.isHttpError)
 #endif
-				{
-					Debug.LogError($"ArtworkManagerNew: Failed to load music from URL: {musicUrl}. Error: {musicRequest.error}");
-					yield break;
-				}
+                    {
+                        Debug.LogError($"ArtworkManagerNew: Failed to load music from URL: {musicUrl}. Error: {musicRequest.error}");
+                        yield break;
+                    }
 
-				currentMusicClip = DownloadHandlerAudioClip.GetContent(musicRequest);
-			}
+                    currentMusicClip = DownloadHandlerAudioClip.GetContent(musicRequest);
+                    WebGLMediaCache.StoreAudioClip(musicUrl, currentMusicClip);
+                }
+            }
 
-			if (currentMusicClip == null)
-			{
-				Debug.LogError("ArtworkManagerNew: Music request succeeded but returned null AudioClip.");
-				yield break;
-			}
+            if (currentMusicClip == null)
+            {
+                Debug.LogError("ArtworkManagerNew: Music request succeeded but returned null AudioClip.");
+                yield break;
+            }
 
-			musicAudioSource.clip = currentMusicClip;
-			musicAudioSource.loop = true;
-			musicAudioSource.Play();
-		}
+            musicAudioSource.clip = currentMusicClip;
+            musicAudioSource.loop = true;
+            musicAudioSource.Play();
+        }
 
 		/// <summary>
 		/// Toggles the exhibition music on/off.
@@ -1070,6 +1079,17 @@ public class ArtworkManagerNew : MonoBehaviour
             yield break;
         }
 
+        // Check cache first so we don't re-download the same image during this session.
+        if (WebGLMediaCache.TryGetTexture(imageUrl, out var cachedTexture))
+        {
+            frame.SetTexture(cachedTexture);
+            if (willCountThisImage)
+            {
+                IncrementDownloadProgress();
+            }
+            yield break;
+        }
+
         Debug.Log($"ArtworkManagerNew: Loading image for frame '{frame.name}' from URL: {imageUrl}");
 
         UnityWebRequest imageRequest = UnityWebRequestTexture.GetTexture(imageUrl);
@@ -1085,6 +1105,7 @@ public class ArtworkManagerNew : MonoBehaviour
         {
             Texture2D texture = DownloadHandlerTexture.GetContent(imageRequest);
             texture = FlipTextureVertically(texture);
+            WebGLMediaCache.StoreTexture(imageUrl, texture);
             frame.SetTexture(texture);
         }
         else
