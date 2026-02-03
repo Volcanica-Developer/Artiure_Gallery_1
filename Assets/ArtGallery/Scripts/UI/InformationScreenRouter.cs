@@ -27,6 +27,10 @@ public class InformationScreenRouter : MonoBehaviour
     [Tooltip("When overridePlatform is true, treat runtime as mobile when this is true.")]
     [SerializeField] private bool forceMobile = false;
 
+    [Header("Editor-Only Override")]
+    [Tooltip("When true in the Editor, always treat runtime as mobile regardless of real platform.")]
+    [SerializeField] private bool forceMobileInEditor = false;
+
     [Header("Runtime Behaviour")]
     [Tooltip("If true, logs when the active information screen manager changes due to orientation/platform.")]
     [SerializeField] private bool logActiveManagerChanges = false;
@@ -79,12 +83,32 @@ public class InformationScreenRouter : MonoBehaviour
     }
 
     /// <summary>
+    /// Returns true if we should treat the runtime as a mobile platform,
+    /// taking into account editor-only overrides and runtime overrides.
+    /// </summary>
+    private bool IsMobile()
+    {
+#if UNITY_EDITOR
+        if (forceMobileInEditor)
+        {
+            return true;
+        }
+#endif
+        if (overridePlatform)
+        {
+            return forceMobile;
+        }
+
+        return Application.isMobilePlatform;
+    }
+
+    /// <summary>
     /// Returns the active InformationScreenUiManager for the current platform,
     /// or null if none is configured.
     /// </summary>
     public InformationScreenUiManager GetActiveManager()
     {
-        bool isMobile = overridePlatform ? forceMobile : Application.isMobilePlatform;
+        bool isMobile = IsMobile();
 
         // If we're on a mobile device but currently in landscape, treat it like desktop
         // for the purposes of the information screen.

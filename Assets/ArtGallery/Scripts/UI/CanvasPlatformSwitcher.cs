@@ -14,6 +14,10 @@ public class CanvasPlatformSwitcher : MonoBehaviour
     [Tooltip("Canvas (or root GameObject) used for mobile browsers")] 
     [SerializeField] private GameObject mobileCanvas;
 
+    [Header("Platform Override (Editor only)")]
+    [Tooltip("Force mobile layout while testing in the Unity Editor.")]
+    [SerializeField] private bool forceMobileInEditor = false;
+
     private void Awake()
     {
         ApplyPlatformCanvases();
@@ -31,6 +35,21 @@ public class CanvasPlatformSwitcher : MonoBehaviour
     }
 
     /// <summary>
+    /// Returns true if we should treat the runtime as a mobile platform for canvas selection.
+    /// Uses an editor-only override to force mobile when testing in the Editor.
+    /// </summary>
+    private bool IsMobile()
+    {
+#if UNITY_EDITOR
+        if (forceMobileInEditor)
+        {
+            return true;
+        }
+#endif
+        return Application.isMobilePlatform;
+    }
+
+    /// <summary>
     /// Applies the platform-specific canvas visibility.
     /// On WebGL, Application.isMobilePlatform is true on mobile browsers
     /// (Android / iOS) and false on desktop browsers.
@@ -38,7 +57,7 @@ public class CanvasPlatformSwitcher : MonoBehaviour
     /// </summary>
     private void ApplyPlatformCanvases()
     {
-        bool isMobile = Application.isMobilePlatform;
+        bool isMobile = IsMobile();
         bool isLandscapeOnMobile = isMobile &&
                                    (Screen.orientation == ScreenOrientation.LandscapeLeft ||
                                     Screen.orientation == ScreenOrientation.LandscapeRight);
