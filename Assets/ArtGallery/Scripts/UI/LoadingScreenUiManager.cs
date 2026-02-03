@@ -19,6 +19,7 @@ public class LoadingScreenUiManager : MonoBehaviour
 
     [Tooltip("This panel will popup when the loading is complete")]
     [SerializeField] private GameObject instructionPanel;
+    [SerializeField] private GameObject menuPanel;
 
     [Header("Events")]
     [Tooltip("Invoked when all images have finished downloading and the loading UI is complete.")]
@@ -97,6 +98,8 @@ public class LoadingScreenUiManager : MonoBehaviour
         {
             if (loadingPanel != null)
             {
+                instructionPanel.SetActive(true);
+                menuPanel.SetActive(true);
                 loadingPanel.SetActive(false);
             }
 

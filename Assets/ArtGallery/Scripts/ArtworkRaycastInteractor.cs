@@ -31,6 +31,30 @@ public class ArtworkRaycastInteractor : MonoBehaviour
     
     private void Update()
     {
+        // If the pointer is over UI, do not interact with the 3D world.
+        if (IsPointerOverUI())
+        {
+            // Clear any hovered frame so it doesn't stay visually highlighted.
+            if (currentHoveredFrame != null)
+            {
+                EventSystem eventSystem = EventSystem.current;
+                if (eventSystem != null)
+                {
+                    ExecuteEvents.Execute(currentHoveredFrame.gameObject,
+                        new PointerEventData(eventSystem),
+                        ExecuteEvents.pointerExitHandler);
+                }
+                else
+                {
+                    currentHoveredFrame.OnPointerExit(null);
+                }
+
+                currentHoveredFrame = null;
+            }
+
+            return;
+        }
+
         HandleRaycast();
         
         // Handle input
@@ -148,6 +172,34 @@ public class ArtworkRaycastInteractor : MonoBehaviour
                 currentHoveredFrame.OnPointerClick(null);
             }
         }
+    }
+
+    /// <summary>
+    /// Returns true if the current mouse or any active touch is over a UI element.
+    /// Used to prevent artwork interaction while interacting with UI.
+    /// </summary>
+    private bool IsPointerOverUI()
+    {
+        if (EventSystem.current == null)
+            return false;
+
+#if UNITY_EDITOR || UNITY_STANDALONE || UNITY_WEBGL
+        // Mouse-based pointer (desktop/WebGL)
+        return EventSystem.current.IsPointerOverGameObject();
+#else
+        // Touch-based pointers (mobile)
+        if (Input.touchCount > 0)
+        {
+            for (int i = 0; i < Input.touchCount; i++)
+            {
+                if (EventSystem.current.IsPointerOverGameObject(Input.GetTouch(i).fingerId))
+                    return true;
+            }
+        }
+
+        // Fallback for other pointer types
+        return EventSystem.current.IsPointerOverGameObject();
+#endif
     }
 }
 

@@ -1,4 +1,5 @@
 using UnityEngine;
+using UnityEngine.EventSystems;
 #if ENABLE_INPUT_SYSTEM
 using UnityEngine.InputSystem;
 #endif
@@ -280,6 +281,12 @@ public class FirstPersonController : MonoBehaviour
             // Use continuous mouse movement (old behavior)
             return;
         }
+
+        // When the pointer is over any UI, do not treat mouse drags as world interaction.
+        if (IsPointerOverUI())
+        {
+            return;
+        }
         
         // Check if mouse button is pressed
         bool mouseButtonDown = Input.GetMouseButtonDown(mouseButtonForRotation);
@@ -381,6 +388,12 @@ public class FirstPersonController : MonoBehaviour
     
     private void HandleTouchInput()
     {
+        // If the pointer/touch is over UI, skip world touch handling.
+        if (IsPointerOverUI())
+        {
+            return;
+        }
+
         // No touches: reset state used for split-touch controls
         if (Input.touchCount == 0)
         {
@@ -505,6 +518,12 @@ public class FirstPersonController : MonoBehaviour
     /// </summary>
     private void HandleNewMobileControl()
     {
+        // Do not interpret gestures that start over UI as world movement/look.
+        if (IsPointerOverUI())
+        {
+            return;
+        }
+
         // Reset inputs each frame; new scheme does not use old split-touch movement/look.
         moveInput = Vector2.zero;
         lookInput = Vector2.zero;
@@ -542,52 +561,12 @@ public class FirstPersonController : MonoBehaviour
             isPinchActive = false;
         }
 
-        // --- One-finger horizontal swipe to rotate left/right ---
-        if (Input.touchCount == 1)
-        {
-            Touch t = Input.GetTouch(0);
+        // --- One-finger swipe handling removed: no swipe-to-rotate on mobile ---
+        // We intentionally do not use a single-finger swipe to drive look/rotation anymore.
+        // Pinch still controls forward/back movement via moveInput.y above.
+        isSwipeActive = false;
 
-            if (!isSwipeActive)
-            {
-                isSwipeActive = true;
-                swipeStartPosition = t.position;
-            }
-
-            if (t.phase == TouchPhase.Moved || t.phase == TouchPhase.Stationary)
-            {
-                float deltaX = t.position.x - swipeStartPosition.x;
-                float deltaY = t.position.y - swipeStartPosition.y;
-                float normalizedX = 0f;
-                float normalizedY = 0f;
-
-                if (Mathf.Abs(deltaX) > 0.01f && swipeStrafeReferenceDistance > 0.01f)
-                {
-                    normalizedX = Mathf.Clamp(deltaX / swipeStrafeReferenceDistance, -1f, 1f) * swipeStrafeSensitivity;
-                }
-
-                if (Mathf.Abs(deltaY) > 0.01f && swipeStrafeReferenceDistance > 0.01f)
-                {
-                    normalizedY = Mathf.Clamp(deltaY / swipeStrafeReferenceDistance, -1f, 1f) * swipeStrafeSensitivity;
-                }
-
-                // Add horizontal + vertical look from swipe
-                float clampedX = Mathf.Clamp(normalizedX, -1f, 1f);
-                float clampedY = Mathf.Clamp(normalizedY, -1f, 1f);
-                lookInput.x += clampedX;
-                lookInput.y += clampedY;
-            }
-
-            if (t.phase == TouchPhase.Ended || t.phase == TouchPhase.Canceled)
-            {
-                isSwipeActive = false;
-            }
-        }
-        else if (Input.touchCount == 0)
-        {
-            isSwipeActive = false;
-        }
-
-        // (Old) no-gyro path: only pinch + swipe affect movement/look here.
+        // (Old) no-gyro path: only pinch affects movement/look here.
     }
 
     private bool IsLayerInMask(int layer, LayerMask mask)
@@ -595,11 +574,42 @@ public class FirstPersonController : MonoBehaviour
         return (mask.value & (1 << layer)) != 0;
     }
 
+    /// <summary>
+    /// Returns true if the current mouse or any active touch is over a UI element.
+    /// Used to prevent mouse/touch from interacting with the 3D world while using UI.
+    /// </summary>
+    private bool IsPointerOverUI()
+    {
+        if (EventSystem.current == null)
+            return false;
+
+#if UNITY_EDITOR || UNITY_STANDALONE || UNITY_WEBGL
+        // Mouse-based pointer (desktop/WebGL)
+        return EventSystem.current.IsPointerOverGameObject();
+#else
+        // Touch-based pointers (mobile)
+        if (Input.touchCount > 0)
+        {
+            for (int i = 0; i < Input.touchCount; i++)
+            {
+                if (EventSystem.current.IsPointerOverGameObject(Input.GetTouch(i).fingerId))
+                    return true;
+            }
+        }
+
+        // Fallback for other pointer types
+        return EventSystem.current.IsPointerOverGameObject();
+#endif
+    }
+
     private void HandleClickToMoveInput()
     {
         if (!enableClickToMove || playerCamera == null)
             return;
 
+        // Ignore click/tap-to-move when interacting with UI.
+        if (IsPointerOverUI())
+            return;
         // Update hover marker on the floor under the cursor when not currently moving
         if (clickMoveMarker != null)
         {
@@ -721,16 +731,21 @@ public class FirstPersonController : MonoBehaviour
                         Debug.Log($"[ClickToMove] Mouse click candidate hit '{hit.collider.gameObject.name}' on layer {layer} ('{layerName}') at {hit.point}");
                     }
 
-                    // If this collider has a DisplayWallStandPoint, use that behaviour instead of generic click-move
-                    DisplayWall wallStandPoint = hit.collider.GetComponent<DisplayWall>();
-                    if (wallStandPoint != null)
+                    // First priority: if we clicked an ArtworkFrame, focus that specific frame.
+                    ArtworkFrame clickedFrame = hit.collider.GetComponentInParent<ArtworkFrame>();
+                    if (clickedFrame != null)
                     {
-                        if (debugClickToMoveLayers)
+                        DisplayWall owningWall = clickedFrame.GetComponentInParent<DisplayWall>();
+                        if (owningWall != null)
                         {
-                            Debug.Log($"[ClickToMove] Mouse click activating DisplayWallStandPoint on '{hit.collider.gameObject.name}'");
+                            if (debugClickToMoveLayers)
+                            {
+                                Debug.Log($"[ClickToMove] Mouse click focusing frame '{clickedFrame.gameObject.name}' on wall '{owningWall.gameObject.name}'");
+                            }
+
+                            owningWall.FocusPlayerOnFrame(clickedFrame);
+                            return;
                         }
-                        wallStandPoint.FocusPlayer();
-                        return;
                     }
 
                     // If the first thing we run into is an ignored layer (e.g. Display Wall), block movement completely
@@ -798,16 +813,21 @@ public class FirstPersonController : MonoBehaviour
                                 Debug.Log($"[ClickToMove] Touch tap candidate hit '{hit.collider.gameObject.name}' on layer {layer} ('{layerName}') at {hit.point}");
                             }
 
-                            // If this collider has a DisplayWallStandPoint, use that behaviour instead of generic click-move
-                            DisplayWall wallStandPoint = hit.collider.GetComponent<DisplayWall>();
-                            if (wallStandPoint != null)
+                            // First priority: if we tapped an ArtworkFrame, focus that specific frame.
+                            ArtworkFrame tappedFrame = hit.collider.GetComponentInParent<ArtworkFrame>();
+                            if (tappedFrame != null)
                             {
-                                if (debugClickToMoveLayers)
+                                DisplayWall owningWall = tappedFrame.GetComponentInParent<DisplayWall>();
+                                if (owningWall != null)
                                 {
-                                    Debug.Log($"[ClickToMove] Touch tap activating DisplayWallStandPoint on '{hit.collider.gameObject.name}'");
+                                    if (debugClickToMoveLayers)
+                                    {
+                                        Debug.Log($"[ClickToMove] Touch tap focusing frame '{tappedFrame.gameObject.name}' on wall '{owningWall.gameObject.name}'");
+                                    }
+
+                                    owningWall.FocusPlayerOnFrame(tappedFrame);
+                                    return;
                                 }
-                                wallStandPoint.FocusPlayer();
-                                return;
                             }
 
                             // If the first thing we run into is an ignored layer (e.g. Display Wall), block movement completely

@@ -49,7 +49,7 @@ public class ArtworkManagerNew : MonoBehaviour
     // Custom headers for API requests (e.g. Authorization). Not serialized in Inspector.
     private Dictionary<string, string> apiHeaders = new Dictionary<string, string>();
 
-    [Header("Debug / State")] 
+    [Header("Debug / State")]
     [SerializeField] private bool isLoading = false;
     [SerializeField] private bool lastLoadSucceeded = false;
 
@@ -67,6 +67,13 @@ public class ArtworkManagerNew : MonoBehaviour
     [Header("Image Download Progress")]
     [SerializeField] private int totalImagesToDownload = 0;
     [SerializeField] private int downloadedImagesCount = 0;
+
+    [Header("Music")]
+    [Tooltip("Optional AudioSource used to play exhibition music fetched from the API.")]
+    [SerializeField] private AudioSource musicAudioSource;
+
+    [Tooltip("Last downloaded/assigned music clip from the exhibition data.")]
+    [SerializeField] private AudioClip currentMusicClip;
 
     /// <summary>
     /// The last successfully parsed configuration.
@@ -334,6 +341,8 @@ public class ArtworkManagerNew : MonoBehaviour
 
         try
         {
+            Debug.Log(json);
+
             var parsed = JsonConvert.DeserializeObject<ArtworkConfigNew>(json);
             if (parsed == null)
             {
@@ -343,6 +352,9 @@ public class ArtworkManagerNew : MonoBehaviour
 
             currentConfig = parsed;
             lastLoadSucceeded = true;
+
+            // As soon as we have valid config, try to start exhibition music (if any "music" field is present).
+            TryStartExhibitionMusic();
 
             // Count how many images we expect to download for this config so UI can track progress.
             totalImagesToDownload = CountImagesToDownload();
@@ -360,6 +372,163 @@ public class ArtworkManagerNew : MonoBehaviour
         catch (Exception ex)
         {
             Debug.LogError($"ArtworkManagerNew: Exception while parsing JSON from {sourceDescription}: {ex.Message}\\n{ex.StackTrace}");
+        }
+    }
+
+    /// <summary>
+    /// Looks for a non-empty music URL in the current exhibition config and, if found,
+    /// downloads and plays it through an AudioSource.
+    /// </summary>
+    private void TryStartExhibitionMusic()
+    {
+        string musicUrl = FindFirstMusicUrlFromConfig();
+        if (string.IsNullOrEmpty(musicUrl))
+        {
+            Debug.Log("ArtworkManagerNew: No music field found in exhibition data.");
+            return;
+        }
+
+        // Stop currently playing music (if any) before starting new one.
+        if (musicAudioSource != null && musicAudioSource.isPlaying)
+        {
+            musicAudioSource.Stop();
+        }
+
+        StartCoroutine(LoadAndPlayMusicFromUrl(musicUrl));
+    }
+
+    /// <summary>
+    /// Scans all exhibitions in the current config and returns the first non-empty
+    /// music URL it finds. This assumes the API returns a string field named "music"
+    /// on each exhibition object.
+    /// </summary>
+    private string FindFirstMusicUrlFromConfig()
+    {
+        if (currentConfig?.data == null)
+        {
+            return null;
+        }
+
+        foreach (var exhibition in currentConfig.data)
+        {
+            if (exhibition == null)
+            {
+                continue;
+            }
+
+            if (!string.IsNullOrEmpty(exhibition.music))
+            {
+                return exhibition.music;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Downloads an audio clip from the given URL and plays it using an AudioSource.
+    /// The clip is stored in <see cref="currentMusicClip"/> so it can be reused if needed.
+    /// </summary>
+    private IEnumerator LoadAndPlayMusicFromUrl(string musicUrl)
+    {
+        if (string.IsNullOrEmpty(musicUrl))
+        {
+            yield break;
+        }
+
+        // Ensure we have an AudioSource to play music on.
+        if (musicAudioSource == null)
+        {
+            musicAudioSource = gameObject.GetComponent<AudioSource>();
+            if (musicAudioSource == null)
+            {
+                musicAudioSource = gameObject.AddComponent<AudioSource>();
+            }
+        }
+
+        // Basic heuristic: if the URL ends with .wav use WAV, otherwise assume MP3.
+        AudioType audioType = AudioType.MPEG;
+        string lowerUrl = musicUrl.ToLowerInvariant();
+        if (lowerUrl.EndsWith(".wav"))
+        {
+            audioType = AudioType.WAV;
+        }
+
+        Debug.Log($"ArtworkManagerNew: Loading exhibition music from URL: {musicUrl}");
+
+        // Check cache first to avoid re-downloading the same music clip.
+        if (WebGLMediaCache.TryGetAudioClip(musicUrl, out var cachedClip))
+        {
+            currentMusicClip = cachedClip;
+        }
+        else
+        {
+            using (UnityWebRequest musicRequest = UnityWebRequestMultimedia.GetAudioClip(musicUrl, audioType))
+            {
+                musicRequest.timeout = Mathf.CeilToInt(apiTimeoutSeconds);
+                yield return musicRequest.SendWebRequest();
+
+#if UNITY_2020_2_OR_NEWER
+                if (musicRequest.result != UnityWebRequest.Result.Success)
+#else
+                    if (musicRequest.isNetworkError || musicRequest.isHttpError)
+#endif
+                {
+                    Debug.LogError($"ArtworkManagerNew: Failed to load music from URL: {musicUrl}. Error: {musicRequest.error}");
+                    yield break;
+                }
+
+                currentMusicClip = DownloadHandlerAudioClip.GetContent(musicRequest);
+                WebGLMediaCache.StoreAudioClip(musicUrl, currentMusicClip);
+            }
+        }
+
+        if (currentMusicClip == null)
+        {
+            Debug.LogError("ArtworkManagerNew: Music request succeeded but returned null AudioClip.");
+            yield break;
+        }
+
+        musicAudioSource.clip = currentMusicClip;
+        musicAudioSource.loop = true;
+        musicAudioSource.Play();
+    }
+
+    /// <summary>
+    /// Toggles the exhibition music on/off.
+    /// - If music is currently playing, it will be stopped.
+    /// - If music is not playing, it will either resume the existing clip or
+    ///   (if none is loaded yet) start loading/playing from the exhibition's music URL.
+    /// </summary>
+    public void ToggleExhibitionMusic()
+    {
+        // Ensure we have an AudioSource reference if one already exists on this GameObject.
+        if (musicAudioSource == null)
+        {
+            musicAudioSource = gameObject.GetComponent<AudioSource>();
+        }
+
+        // Case 1: We already have an AudioSource and a clip assigned.
+        if (musicAudioSource != null && musicAudioSource.clip != null)
+        {
+            if (musicAudioSource.isPlaying)
+            {
+                // Stop current playback.
+                musicAudioSource.Stop();
+            }
+            else
+            {
+                // Start (or restart) playback from the beginning.
+                musicAudioSource.Play();
+            }
+            return;
+        }
+
+        // Case 2: No clip loaded yet, but we have config data. Attempt to load
+        // and start playing from the exhibition's music URL.
+        if (currentConfig != null)
+        {
+            TryStartExhibitionMusic();
         }
     }
 
@@ -387,8 +556,16 @@ public class ArtworkManagerNew : MonoBehaviour
 
         foreach (var exhibition in currentConfig.data)
         {
-            if (exhibition?.walls?.paintings == null) continue;
-            result.AddRange(exhibition.walls.paintings);
+            if (exhibition?.walls == null)
+                continue;
+
+            foreach (var wall in exhibition.walls)
+            {
+                if (wall?.paintings == null)
+                    continue;
+
+                result.AddRange(wall.paintings);
+            }
         }
 
         return result;
@@ -406,19 +583,25 @@ public class ArtworkManagerNew : MonoBehaviour
         int count = 0;
         foreach (var exhibition in currentConfig.data)
         {
-            if (exhibition?.walls?.paintings == null)
+            if (exhibition?.walls == null)
                 continue;
 
-            foreach (var painting in exhibition.walls.paintings)
+            foreach (var wall in exhibition.walls)
             {
-                string url = painting?.mainImage != null ? painting.mainImage.src : null;
-                if (string.IsNullOrEmpty(url))
+                if (wall?.paintings == null)
                     continue;
 
-                if (url.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
-                    url.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+                foreach (var painting in wall.paintings)
                 {
-                    count++;
+                    string url = painting?.mainImage != null ? painting.mainImage.src : null;
+                    if (string.IsNullOrEmpty(url))
+                        continue;
+
+                    if (url.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+                        url.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+                    {
+                        count++;
+                    }
                 }
             }
         }
@@ -437,13 +620,21 @@ public class ArtworkManagerNew : MonoBehaviour
 
         foreach (var exhibition in currentConfig.data)
         {
-            if (exhibition?.walls == null) continue;
-            if (!string.Equals(exhibition.walls.wallId, wallId, StringComparison.OrdinalIgnoreCase))
+            if (exhibition?.walls == null)
                 continue;
 
-            if (exhibition.walls.paintings != null)
+            foreach (var wall in exhibition.walls)
             {
-                result.AddRange(exhibition.walls.paintings);
+                if (wall == null)
+                    continue;
+
+                if (!string.Equals(wall.wallId, wallId, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                if (wall.paintings != null)
+                {
+                    result.AddRange(wall.paintings);
+                }
             }
         }
 
@@ -460,10 +651,18 @@ public class ArtworkManagerNew : MonoBehaviour
 
         foreach (var exhibition in currentConfig.data)
         {
-            if (exhibition?.walls == null) continue;
-            if (string.Equals(exhibition.walls.wallId, wallId, StringComparison.OrdinalIgnoreCase))
+            if (exhibition?.walls == null)
+                continue;
+
+            foreach (var wall in exhibition.walls)
             {
-                return exhibition;
+                if (wall == null)
+                    continue;
+
+                if (string.Equals(wall.wallId, wallId, StringComparison.OrdinalIgnoreCase))
+                {
+                    return exhibition;
+                }
             }
         }
 
@@ -655,26 +854,40 @@ public class ArtworkManagerNew : MonoBehaviour
     }
 
     /// <summary>
-    /// Convenience helper: given an ExhibitionConfigNew entry, instantiate the correct FrameLayout
-    /// on the correct DisplayWall using exhibition.walls.layoutId and exhibition.walls.wallId.
+    /// Convenience helper: given an ExhibitionConfigNew entry, instantiate FrameLayout
+    /// instances for all of its walls using each wall's layoutId and wallId.
+    /// Returns the first successfully instantiated FrameLayout (or null if none succeed).
     /// </summary>
     public FrameLayout InstantiateLayoutForExhibition(ExhibitionConfigNew exhibition)
     {
-        if (exhibition == null || exhibition.walls == null)
+        if (exhibition == null || exhibition.walls == null || exhibition.walls.Count == 0)
         {
-            Debug.LogWarning("ArtworkManagerNew: InstantiateLayoutForExhibition called with null exhibition or walls.");
+            Debug.LogWarning("ArtworkManagerNew: InstantiateLayoutForExhibition called with null or empty walls.");
             return null;
         }
 
-        return InstantiateLayoutOnWall(exhibition.walls.layoutId, exhibition.walls.wallId);
+        FrameLayout firstInstance = null;
+
+        foreach (var wallConfig in exhibition.walls)
+        {
+            if (wallConfig == null)
+                continue;
+
+            var layoutInstance = InstantiateLayoutOnWall(wallConfig.layoutId, wallConfig.wallId);
+            if (layoutInstance != null && firstInstance == null)
+            {
+                firstInstance = layoutInstance;
+            }
+        }
+
+        return firstInstance;
     }
 
     /// <summary>
     /// Instantiates layouts for all exhibitions in the current JSON config.
-    /// Uses each exhibition.walls.layoutId and exhibition.walls.wallId to pick the
-    /// appropriate FrameLayout prefab and spawn it under the right DisplayWall.
-    /// This does NOT load any images; call PopulateLayoutsWithImagesFromJson() after
-    /// this if you want to fill the frames.
+    /// Uses each wall's layoutId and wallId to pick the appropriate FrameLayout prefab
+    /// and spawn it under the right DisplayWall. This does NOT load any images; call
+    /// PopulateLayoutsWithImagesFromJson() after this if you want to fill the frames.
     /// </summary>
     public void InstantiateLayoutsFromJson()
     {
@@ -689,21 +902,27 @@ public class ArtworkManagerNew : MonoBehaviour
             if (exhibition == null || exhibition.walls == null)
                 continue;
 
-            var layoutId = exhibition.walls.layoutId;
-            var wallId = exhibition.walls.wallId;
-
-            var layoutInstance = InstantiateLayoutOnWall(layoutId, wallId);
-            if (layoutInstance == null)
+            foreach (var wallConfig in exhibition.walls)
             {
-                Debug.LogWarning($"ArtworkManagerNew: Failed to instantiate layout '{layoutId}' on wall '{wallId}'.");
+                if (wallConfig == null)
+                    continue;
+
+                var layoutId = wallConfig.layoutId;
+                var wallId = wallConfig.wallId;
+
+                var layoutInstance = InstantiateLayoutOnWall(layoutId, wallId);
+                if (layoutInstance == null)
+                {
+                    Debug.LogWarning($"ArtworkManagerNew: Failed to instantiate layout '{layoutId}' on wall '{wallId}'.");
+                }
             }
         }
     }
 
     /// <summary>
     /// Sequentially instantiates a layout and then applies its images for each
-    /// exhibition in the current config. This avoids kicking off many image
-    /// download coroutines at once, which can cause some images to fail.
+    /// wall of each exhibition in the current config. This avoids kicking off many
+    /// image download coroutines at once, which can cause some images to fail.
     /// </summary>
     private IEnumerator BuildLayoutsAndImagesSequentially()
     {
@@ -718,30 +937,36 @@ public class ArtworkManagerNew : MonoBehaviour
             if (exhibition == null || exhibition.walls == null)
                 continue;
 
-            var layoutId = exhibition.walls.layoutId;
-            var wallId = exhibition.walls.wallId;
-
-            var layoutInstance = InstantiateLayoutOnWall(layoutId, wallId);
-            if (layoutInstance == null)
+            foreach (var wallConfig in exhibition.walls)
             {
-                Debug.LogWarning($"ArtworkManagerNew: Failed to instantiate layout '{layoutId}' on wall '{wallId}' during sequential build.");
-                continue;
-            }
+                if (wallConfig == null)
+                    continue;
 
-            // Apply images for this one layout before moving to the next
-            yield return ApplyPaintingsToLayout(exhibition, layoutInstance);
+                var layoutId = wallConfig.layoutId;
+                var wallId = wallConfig.wallId;
 
-            if (layoutBuildDelaySeconds > 0f)
-            {
-                yield return new WaitForSeconds(layoutBuildDelaySeconds);
+                var layoutInstance = InstantiateLayoutOnWall(layoutId, wallId);
+                if (layoutInstance == null)
+                {
+                    Debug.LogWarning($"ArtworkManagerNew: Failed to instantiate layout '{layoutId}' on wall '{wallId}' during sequential build.");
+                    continue;
+                }
+
+                // Apply images for this one layout before moving to the next
+                yield return ApplyPaintingsToLayout(wallConfig, layoutInstance);
+
+                if (layoutBuildDelaySeconds > 0f)
+                {
+                    yield return new WaitForSeconds(layoutBuildDelaySeconds);
+                }
             }
         }
     }
 
     /// <summary>
     /// For all exhibitions in the current JSON config, finds the instantiated FrameLayout
-    /// under the appropriate DisplayWall and downloads mainImage.src for each painting
-    /// into the corresponding ArtworkFrame.
+    /// under the appropriate DisplayWall for each wall and downloads mainImage.src for
+    /// each painting into the corresponding ArtworkFrame.
     ///
     /// Extra paintings (more paintings than frames) are ignored.
     /// Extra frames (more frames than paintings) are cleared.
@@ -759,55 +984,61 @@ public class ArtworkManagerNew : MonoBehaviour
             if (exhibition == null || exhibition.walls == null)
                 continue;
 
-            // Find the wall instance in the scene
-            var wall = GetDisplayWallForWallId(exhibition.walls.wallId);
-            if (wall == null)
+            foreach (var wallConfig in exhibition.walls)
             {
-                Debug.LogWarning($"ArtworkManagerNew: No DisplayWall found for wallId '{exhibition.walls.wallId}' when populating images.");
-                continue;
-            }
+                if (wallConfig == null)
+                    continue;
 
-            // Find a FrameLayout instance on this wall whose LayoutId matches the numeric part of JSON layoutId
-            int layoutNumericId = ParseNumericSuffix(exhibition.walls.layoutId);
-            if (layoutNumericId < 0)
-            {
-                Debug.LogWarning($"ArtworkManagerNew: Could not parse numeric layout index from layoutId '{exhibition.walls.layoutId}' when populating images.");
-                continue;
-            }
-
-            FrameLayout targetLayout = null;
-            var layoutsOnWall = wall.GetComponentsInChildren<FrameLayout>(includeInactive: true);
-            foreach (var layout in layoutsOnWall)
-            {
-                if (layout != null && layout.LayoutId == layoutNumericId)
+                // Find the wall instance in the scene
+                var wall = GetDisplayWallForWallId(wallConfig.wallId);
+                if (wall == null)
                 {
-                    targetLayout = layout;
-                    break;
+                    Debug.LogWarning($"ArtworkManagerNew: No DisplayWall found for wallId '{wallConfig.wallId}' when populating images.");
+                    continue;
                 }
-            }
 
-            if (targetLayout == null)
-            {
-                Debug.LogWarning($"ArtworkManagerNew: No FrameLayout instance with LayoutId {layoutNumericId} found under wall '{wall.name}' when populating images.");
-                continue;
-            }
+                // Find a FrameLayout instance on this wall whose LayoutId matches the numeric part of JSON layoutId
+                int layoutNumericId = ParseNumericSuffix(wallConfig.layoutId);
+                if (layoutNumericId < 0)
+                {
+                    Debug.LogWarning($"ArtworkManagerNew: Could not parse numeric layout index from layoutId '{wallConfig.layoutId}' when populating images.");
+                    continue;
+                }
 
-            // Start async loading of textures into this layout's frames
-            StartCoroutine(ApplyPaintingsToLayout(exhibition, targetLayout));
+                FrameLayout targetLayout = null;
+                var layoutsOnWall = wall.GetComponentsInChildren<FrameLayout>(includeInactive: true);
+                foreach (var layout in layoutsOnWall)
+                {
+                    if (layout != null && layout.LayoutId == layoutNumericId)
+                    {
+                        targetLayout = layout;
+                        break;
+                    }
+                }
+
+                if (targetLayout == null)
+                {
+                    Debug.LogWarning($"ArtworkManagerNew: No FrameLayout instance with LayoutId {layoutNumericId} found under wall '{wall.name}' when populating images.");
+                    continue;
+                }
+
+                // Start async loading of textures into this layout's frames
+                StartCoroutine(ApplyPaintingsToLayout(wallConfig, targetLayout));
+            }
         }
     }
 
     /// <summary>
-    /// For a given exhibition and instantiated FrameLayout, download and assign
+    /// For a given wall configuration and instantiated FrameLayout, download and assign
     /// mainImage textures to each ArtworkFrame child. Extra paintings are ignored;
     /// extra frames are left empty (texture cleared).
     /// </summary>
-    private IEnumerator ApplyPaintingsToLayout(ExhibitionConfigNew exhibition, FrameLayout layout)
+    private IEnumerator ApplyPaintingsToLayout(WallsConfigNew wallConfig, FrameLayout layout)
     {
-        if (exhibition == null || exhibition.walls == null || layout == null)
+        if (wallConfig == null || layout == null)
             yield break;
 
-        var paintings = exhibition.walls.paintings;
+        var paintings = wallConfig.paintings;
         if (paintings == null)
             yield break;
 
@@ -912,6 +1143,17 @@ public class ArtworkManagerNew : MonoBehaviour
             yield break;
         }
 
+        // Check cache first so we don't re-download the same image during this session.
+        if (WebGLMediaCache.TryGetTexture(imageUrl, out var cachedTexture))
+        {
+            frame.SetTexture(cachedTexture);
+            if (willCountThisImage)
+            {
+                IncrementDownloadProgress();
+            }
+            yield break;
+        }
+
         Debug.Log($"ArtworkManagerNew: Loading image for frame '{frame.name}' from URL: {imageUrl}");
 
         UnityWebRequest imageRequest = UnityWebRequestTexture.GetTexture(imageUrl);
@@ -927,6 +1169,7 @@ public class ArtworkManagerNew : MonoBehaviour
         {
             Texture2D texture = DownloadHandlerTexture.GetContent(imageRequest);
             texture = FlipTextureVertically(texture);
+            WebGLMediaCache.StoreTexture(imageUrl, texture);
             frame.SetTexture(texture);
         }
         else
@@ -1002,9 +1245,57 @@ public class ExhibitionConfigNew
     public string uuid;
     public string name;
     public string description;
+
     public string slug;
     public string status;
-    public WallsConfigNew walls;
+
+    // New fields from updated API structure
+    public string userId;
+    public string createdAt;
+    public string updatedAt;
+
+    /// <summary>
+    /// Optional music clip URL associated with this exhibition. This is expected to be
+    /// provided by the getExhibitionFromId API under the field name "music".
+    /// </summary>
+    public string music;
+
+    /// <summary>
+    /// Optional list of artist profiles attached to this exhibition.
+    /// </summary>
+    public List<ArtistConfigNew> artist;
+
+    /// <summary>
+    /// One or more walls that belong to this exhibition.
+    /// </summary>
+    public List<WallsConfigNew> walls;
+}
+
+/// <summary>
+/// Artist metadata returned with an exhibition.
+/// </summary>
+[Serializable]
+public class ArtistConfigNew
+{
+    public string _id;
+    public string uuid;
+    public string fullName;
+    public string email;
+    public string phone;
+    public string location;
+    public string instagramOrWebsite;
+    public string portfolioLink;
+    public List<string> mediums;
+    public List<string> styles;
+    public string statement;
+    public string heardFrom;
+    public string awards;
+    public List<string> additionalLinks;
+    public bool reviewed;
+    public string role;
+    public string status;
+    public string createdAt;
+    public string updatedAt;
 }
 
 /// <summary>
@@ -1013,9 +1304,31 @@ public class ExhibitionConfigNew
 [Serializable]
 public class WallsConfigNew
 {
-    public List<PaintingConfigNew> paintings;
+    /// <summary>
+    /// Identifier of the target DisplayWall, e.g. "WALL_17".
+    /// </summary>
     public string wallId;
+
+    /// <summary>
+    /// Layout identifier, e.g. "layout_6".
+    /// </summary>
     public string layoutId;
+
+    /// <summary>
+    /// Slot index on the gallery grid this wall starts at (as provided by the API).
+    /// Currently used only for debugging / layout mapping.
+    /// </summary>
+    public int startSlot;
+
+    /// <summary>
+    /// Number of slots this wall spans on the gallery grid.
+    /// </summary>
+    public int slotSpan;
+
+    /// <summary>
+    /// All paintings assigned to this wall.
+    /// </summary>
+    public List<PaintingConfigNew> paintings;
 }
 
 /// <summary>

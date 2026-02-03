@@ -1053,11 +1053,20 @@ public class ArtworkManager : MonoBehaviour
     
     /// <summary>
     /// Loads an image texture from a URL and assigns it to the artwork data.
+    /// Uses WebGLMediaCache so that repeated URLs are not re-downloaded.
     /// </summary>
     private IEnumerator LoadImageFromURL(string imageUrl, ArtworkData artworkData)
     {
         if (string.IsNullOrEmpty(imageUrl))
         {
+            yield break;
+        }
+        
+        // Check cache first (covers WebGL and non-WebGL builds).
+        if (WebGLMediaCache.TryGetTexture(imageUrl, out var cachedTexture))
+        {
+            artworkData.image = cachedTexture;
+            Debug.Log($"ArtworkManager: Using cached image for '{artworkData.title}' from {imageUrl}");
             yield break;
         }
         
@@ -1087,6 +1096,7 @@ public class ArtworkManager : MonoBehaviour
             {
                 // Flip texture vertically to fix upside-down issue
                 texture = FlipTextureVertically(texture);
+                WebGLMediaCache.StoreTexture(imageUrl, texture);
                 artworkData.image = texture;
                 Debug.Log($"ArtworkManager: Successfully loaded image for '{artworkData.title}'");
             }
