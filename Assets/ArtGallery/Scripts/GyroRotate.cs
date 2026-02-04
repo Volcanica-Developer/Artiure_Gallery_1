@@ -9,6 +9,10 @@ public class GyroRotate : MonoBehaviour
     [SerializeField] private bool usePlayerPrefsToggle = false;
     [SerializeField] private string playerPrefsKey = "GYRO_SETTING";
 
+    [Header("Base Rotation")]
+    [Tooltip("Initial local rotation (in degrees) applied before gyro deltas. For example, set Y = 180 to face the opposite way by default.")]
+    [SerializeField] private Vector3 baseLocalEuler = new Vector3(0f, 180f, 0f);
+
     [Header("Rotation Limits (x = minY, y = maxY, z = minX, w = maxX)")]
     [SerializeField] private Vector4 cardRotationLimits = new Vector4(-45f, 45f, -30f, 30f);
 
@@ -28,7 +32,13 @@ public class GyroRotate : MonoBehaviour
         if (tCanDoGyroSetting && SystemInfo.supportsGyroscope)
         {
             Input.gyro.enabled = true;
-            transform.localRotation = Quaternion.Euler(Vector3.zero);
+
+            // Start from the configured base rotation (e.g. Y = 180), then let gyro apply
+            // relative deltas on top of that.
+            transform.localRotation = Quaternion.Euler(baseLocalEuler);
+
+            // Capture the initial gyro attitude (not strictly required for rotationRate-based logic,
+            // but kept for potential future use/debugging).
             delta = GyroToUnity(Input.gyro.attitude).eulerAngles;
         }
     }
