@@ -1507,8 +1507,10 @@ public class ArtworkManagerNew : MonoBehaviour
         if (WebGLMediaCache.TryGetTexture(imageUrl, out var cachedTexture))
         {
             frame.SetTexture(cachedTexture);
+            Debug.Log($"ArtworkManagerNew: Using cached image for frame '{frame.name}' from URL: {imageUrl}");
             if (willCountThisImage)
             {
+                successfulDownloads++;
                 IncrementDownloadProgress();
             }
             yield break;
