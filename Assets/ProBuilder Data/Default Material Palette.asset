@@ -13,9 +13,9 @@ MonoBehaviour:
   m_Name: Default Material Palette
   m_EditorClassIdentifier: Unity.ProBuilder.Editor::UnityEditor.ProBuilder.MaterialPalette
   array:
-  - {fileID: 2100000, guid: c22777d6e868e4f2fb421913386b154e, type: 2}
-  - {fileID: 0}
-  - {fileID: 0}
+  - {fileID: 2100000, guid: 21340eed94feaaf4c8fc2cae5743896b, type: 2}
+  - {fileID: 2100000, guid: 5a15f44b7ef23214fba0423c555cbad0, type: 2}
+  - {fileID: 2100000, guid: dbcd4e40342fb764ca560484da712e20, type: 2}
   - {fileID: 0}
   - {fileID: 0}
   - {fileID: 0}
