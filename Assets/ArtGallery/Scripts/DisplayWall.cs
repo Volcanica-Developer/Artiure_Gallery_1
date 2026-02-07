@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 using DG.Tweening;
 
@@ -19,6 +20,14 @@ public class DisplayWall : MonoBehaviour
     [Header("Wall Info")]
     [Tooltip("Logical ID of this wall (e.g. 1, 2, 3 ...). Used by ArtworkManagerNew.")]
     public int displayWallId;
+
+    [Tooltip("If true, use DisplayWallSlot children to position paintings based on slotIndex and slotSpan from JSON.")]
+    [SerializeField] private bool useSlots;
+
+    /// <summary>
+    /// Returns true if this wall is configured to use slot-based positioning.
+    /// </summary>
+    public bool UseSlots => useSlots;
 
     [Header("Standing / View Points (Legacy)")]
     [Tooltip("Optional fixed standing point in front of this wall (legacy flow). If null, frame-based standing positions are used.")]
@@ -264,5 +273,77 @@ public class DisplayWall : MonoBehaviour
         }
 
         return framePos + offset;
+    }
+
+    /// <summary>
+    /// Finds all DisplayWallSlot children of this wall and returns them sorted by slotId.
+    /// </summary>
+    public List<DisplayWallSlot> GetAllSlots()
+    {
+        var slots = GetComponentsInChildren<DisplayWallSlot>();
+        var sortedList = new List<DisplayWallSlot>(slots);
+        sortedList.Sort((a, b) => a.SlotId.CompareTo(b.SlotId));
+        return sortedList;
+    }
+
+    /// <summary>
+    /// Finds a DisplayWallSlot child with the given slotId.
+    /// Returns null if not found.
+    /// </summary>
+    public DisplayWallSlot GetSlotById(int slotId)
+    {
+        var slots = GetComponentsInChildren<DisplayWallSlot>();
+        foreach (var slot in slots)
+        {
+            if (slot.SlotId == slotId)
+            {
+                return slot;
+            }
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Calculates the center position between multiple slots based on startSlot and slotSpan.
+    /// If slotSpan is 2 and startSlot is 0, this finds slots 0 and 1 and returns the center.
+    /// Returns Vector3.zero if slots are not found.
+    /// </summary>
+    public Vector3 CalculateSlotCenterPosition(int startSlot, int slotSpan)
+    {
+        if (slotSpan <= 0)
+        {
+            Debug.LogWarning($"DisplayWall '{name}': Invalid slotSpan {slotSpan}. Must be greater than 0.");
+            return Vector3.zero;
+        }
+
+        // Collect all slots in the span range
+        List<Transform> slotTransforms = new List<Transform>();
+        for (int i = startSlot; i < startSlot + slotSpan; i++)
+        {
+            var slot = GetSlotById(i);
+            if (slot != null)
+            {
+                slotTransforms.Add(slot.transform);
+            }
+            else
+            {
+                Debug.LogWarning($"DisplayWall '{name}': Slot with ID {i} not found when calculating position for startSlot={startSlot}, slotSpan={slotSpan}.");
+            }
+        }
+
+        if (slotTransforms.Count == 0)
+        {
+            Debug.LogError($"DisplayWall '{name}': No slots found in range [{startSlot}, {startSlot + slotSpan - 1}].");
+            return Vector3.zero;
+        }
+
+        // Calculate the average position (center) of all slot transforms
+        Vector3 sum = Vector3.zero;
+        foreach (var slotTransform in slotTransforms)
+        {
+            sum += slotTransform.position;
+        }
+
+        return sum / slotTransforms.Count;
     }
 }

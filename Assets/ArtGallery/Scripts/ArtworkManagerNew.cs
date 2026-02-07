@@ -4,7 +4,10 @@ using System.Collections.Generic;
 using System.Text;
 using UnityEngine;
 using UnityEngine.Networking;
+using UnityEngine.Video;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
+using TMPro;
 
 /// <summary>
 /// ArtworkManagerNew is responsible for loading and exposing the new exhibition-based
@@ -33,6 +36,9 @@ public class ArtworkManagerNew : MonoBehaviour
 
     [Tooltip("Exhibition UUID to request from the API. For now this can be hard-coded; later it can come from user selection.")]
     [SerializeField] private string exhibitionId = "e459a070-3f67-4624-8d33-4dc33d1d6af0";
+
+    [Tooltip("Token to be sent as a header in the API request.")]
+    [SerializeField] private string token = "";
 
     [SerializeField] private float apiTimeoutSeconds = 10f;
 
@@ -68,12 +74,33 @@ public class ArtworkManagerNew : MonoBehaviour
     [SerializeField] private int totalImagesToDownload = 0;
     [SerializeField] private int downloadedImagesCount = 0;
 
+    [Header("Download Retry Settings")]
+    [Tooltip("Number of retry attempts for failed image downloads.")]
+    [SerializeField] private int maxRetryAttempts = 3;
+
+    [Tooltip("Delay in seconds between retry attempts.")]
+    [SerializeField] private float retryDelaySeconds = 1f;
+
     [Header("Music")]
     [Tooltip("Optional AudioSource used to play exhibition music fetched from the API.")]
     [SerializeField] private AudioSource musicAudioSource;
 
     [Tooltip("Last downloaded/assigned music clip from the exhibition data.")]
     [SerializeField] private AudioClip currentMusicClip;
+
+    [Header("Exhibition Media")]
+    [Tooltip("VideoPlayer component to display the exhibition video.")]
+    [SerializeField] private VideoPlayer exhibitionVideoPlayer;
+
+    [Tooltip("SpriteRenderer to display the exhibition preview image.")]
+    [SerializeField] private SpriteRenderer previewImageRenderer;
+
+    [Header("Artist Info")]
+    [Tooltip("TMP_Text component to display the artist's full name.")]
+    [SerializeField] private TMP_Text artistNameText;
+
+    [Tooltip("TMP_Text component to display the artist's statement.")]
+    [SerializeField] private TMP_Text artistStatementText;
 
     /// <summary>
     /// The last successfully parsed configuration.
@@ -259,6 +286,12 @@ public class ArtworkManagerNew : MonoBehaviour
             request.downloadHandler = new DownloadHandlerBuffer();
             request.SetRequestHeader("Content-Type", "application/json");
 
+            // Add token header if provided
+            if (!string.IsNullOrEmpty(token))
+            {
+                request.SetRequestHeader("token", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiI2OTgzNDM4MDU5ZDlmNmI1YzU4YjhmNzEiLCJ1dWlkIjoiYjA2OTRlOGUtZWE3Zi00NjgyLThlZjMtNzgyZDJlZDdhMTFkIiwiZXhwIjoxNzcwOTAwNjgyLCJpYXQiOjE3NzAyOTU4ODIsIm5iZiI6MTc3MDI5NTg4Mn0.DD2cS-NCVtMs2FHbU9qag9JCnwLqIZnE0JoTC2mXYH0");
+            }
+
             // Apply custom headers if any (e.g. Authorization)
             if (apiHeaders != null)
             {
@@ -343,8 +376,37 @@ public class ArtworkManagerNew : MonoBehaviour
         {
             Debug.Log(json);
 
-            var parsed = JsonConvert.DeserializeObject<ArtworkConfigNew>(json);
-            if (parsed == null)
+            // Parse JSON and detect if "data" is an object or array
+            JObject root = JObject.Parse(json);
+            ArtworkConfigNew parsed = new ArtworkConfigNew();
+            parsed.success = root["success"]?.ToObject<bool>() ?? false;
+
+            // Check if "data" is an array or a single object
+            JToken dataToken = root["data"];
+            if (dataToken == null)
+            {
+                Debug.LogError($"ArtworkManagerNew: No 'data' field found in JSON from {sourceDescription}.");
+                return;
+            }
+
+            if (dataToken.Type == JTokenType.Array)
+            {
+                // Data is an array of exhibitions (e.g. from Resources JSON)
+                parsed.data = dataToken.ToObject<List<ExhibitionConfigNew>>();
+            }
+            else if (dataToken.Type == JTokenType.Object)
+            {
+                // Data is a single exhibition object (e.g. from API)
+                var singleExhibition = dataToken.ToObject<ExhibitionConfigNew>();
+                parsed.data = new List<ExhibitionConfigNew> { singleExhibition };
+            }
+            else
+            {
+                Debug.LogError($"ArtworkManagerNew: Unexpected 'data' type in JSON from {sourceDescription}. Expected object or array.");
+                return;
+            }
+
+            if (parsed == null || parsed.data == null)
             {
                 Debug.LogError($"ArtworkManagerNew: Failed to parse JSON from {sourceDescription} into ArtworkConfigNew.");
                 return;
@@ -355,6 +417,13 @@ public class ArtworkManagerNew : MonoBehaviour
 
             // As soon as we have valid config, try to start exhibition music (if any "music" field is present).
             TryStartExhibitionMusic();
+
+            // Apply exhibition video and preview image to their respective components.
+            TryApplyExhibitionVideo();
+            TryApplyExhibitionPreviewImage();
+
+            // Apply artist info to text components.
+            TryApplyArtistInfo();
 
             // Count how many images we expect to download for this config so UI can track progress.
             totalImagesToDownload = CountImagesToDownload();
@@ -530,6 +599,232 @@ public class ArtworkManagerNew : MonoBehaviour
         {
             TryStartExhibitionMusic();
         }
+    }
+
+    /// <summary>
+    /// Applies the exhibition video URL to the VideoPlayer component if available.
+    /// </summary>
+    private void TryApplyExhibitionVideo()
+    {
+        if (exhibitionVideoPlayer == null)
+        {
+            Debug.Log("ArtworkManagerNew: No VideoPlayer assigned for exhibition video.");
+            return;
+        }
+
+        string videoUrl = FindFirstVideoUrlFromConfig();
+        if (string.IsNullOrEmpty(videoUrl))
+        {
+            Debug.Log("ArtworkManagerNew: No video field found in exhibition data.");
+            return;
+        }
+
+        Debug.Log($"ArtworkManagerNew: Applying exhibition video URL: {videoUrl}");
+        exhibitionVideoPlayer.source = VideoSource.Url;
+        exhibitionVideoPlayer.url = videoUrl;
+        exhibitionVideoPlayer.Play();
+    }
+
+    /// <summary>
+    /// Finds the first non-empty video URL from the exhibition config.
+    /// </summary>
+    private string FindFirstVideoUrlFromConfig()
+    {
+        if (currentConfig?.data == null)
+        {
+            return null;
+        }
+
+        foreach (var exhibition in currentConfig.data)
+        {
+            if (exhibition?.video != null && !string.IsNullOrEmpty(exhibition.video.src))
+            {
+                return exhibition.video.src;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Applies the exhibition preview image to the SpriteRenderer component if available.
+    /// </summary>
+    private void TryApplyExhibitionPreviewImage()
+    {
+        if (previewImageRenderer == null)
+        {
+            Debug.Log("ArtworkManagerNew: No SpriteRenderer assigned for exhibition preview image.");
+            return;
+        }
+
+        string previewImageUrl = FindFirstPreviewImageUrlFromConfig();
+        if (string.IsNullOrEmpty(previewImageUrl))
+        {
+            Debug.Log("ArtworkManagerNew: No preview image field found in exhibition data.");
+            return;
+        }
+
+        StartCoroutine(LoadPreviewImageFromUrl(previewImageUrl));
+    }
+
+    /// <summary>
+    /// Finds the first non-empty preview image URL from the exhibition config.
+    /// </summary>
+    private string FindFirstPreviewImageUrlFromConfig()
+    {
+        if (currentConfig?.data == null)
+        {
+            return null;
+        }
+
+        foreach (var exhibition in currentConfig.data)
+        {
+            if (exhibition?.previewImage != null && !string.IsNullOrEmpty(exhibition.previewImage.src))
+            {
+                return exhibition.previewImage.src;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Downloads the preview image from the given URL and applies it to the SpriteRenderer.
+    /// </summary>
+    private IEnumerator LoadPreviewImageFromUrl(string imageUrl)
+    {
+        if (string.IsNullOrEmpty(imageUrl))
+        {
+            yield break;
+        }
+
+        Debug.Log($"ArtworkManagerNew: Loading exhibition preview image from URL: {imageUrl}");
+
+        // Check cache first.
+        if (WebGLMediaCache.TryGetTexture(imageUrl, out var cachedTexture))
+        {
+            ApplyTextureToSpriteRenderer(cachedTexture);
+            yield break;
+        }
+
+        using (UnityWebRequest imageRequest = UnityWebRequestTexture.GetTexture(imageUrl))
+        {
+            imageRequest.timeout = Mathf.CeilToInt(apiTimeoutSeconds);
+            yield return imageRequest.SendWebRequest();
+
+#if UNITY_2020_2_OR_NEWER
+            if (imageRequest.result != UnityWebRequest.Result.Success)
+#else
+            if (imageRequest.isNetworkError || imageRequest.isHttpError)
+#endif
+            {
+                Debug.LogError($"ArtworkManagerNew: Failed to load preview image from URL: {imageUrl}. Error: {imageRequest.error}");
+                yield break;
+            }
+
+            Texture2D texture = DownloadHandlerTexture.GetContent(imageRequest);
+            if (texture != null)
+            {
+                WebGLMediaCache.StoreTexture(imageUrl, texture);
+                ApplyTextureToSpriteRenderer(texture);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Converts a Texture2D to a Sprite and applies it to the preview image SpriteRenderer.
+    /// Calculates pixels-per-unit to preserve the original size if a sprite already exists.
+    /// </summary>
+    private void ApplyTextureToSpriteRenderer(Texture2D texture)
+    {
+        if (previewImageRenderer == null || texture == null)
+        {
+            return;
+        }
+
+        // Default pixels-per-unit.
+        float pixelsPerUnit = 100f;
+
+        // If there's an existing sprite, calculate PPU to match the current world size.
+        if (previewImageRenderer.sprite != null)
+        {
+            Vector2 currentWorldSize = previewImageRenderer.bounds.size;
+            Vector3 scale = previewImageRenderer.transform.lossyScale;
+
+            if (currentWorldSize.x > 0 && currentWorldSize.y > 0)
+            {
+                // Calculate PPU so the new texture fits the same world size.
+                // Use the larger dimension to ensure it fits within bounds.
+                float ppuForWidth = texture.width / (currentWorldSize.x / Mathf.Abs(scale.x)) * Mathf.Abs(scale.x);
+                float ppuForHeight = texture.height / (currentWorldSize.y / Mathf.Abs(scale.y)) * Mathf.Abs(scale.y);
+                pixelsPerUnit = Mathf.Max(ppuForWidth, ppuForHeight);
+            }
+        }
+
+        Sprite sprite = Sprite.Create(
+            texture,
+            new Rect(0, 0, texture.width, texture.height),
+            new Vector2(0.5f, 0.5f),
+            pixelsPerUnit
+        );
+
+        previewImageRenderer.sprite = sprite;
+
+        Debug.Log($"ArtworkManagerNew: Applied preview image to SpriteRenderer ({texture.width}x{texture.height}, PPU: {pixelsPerUnit})");
+    }
+
+    /// <summary>
+    /// Applies the artist's full name and statement to the text components if available.
+    /// </summary>
+    private void TryApplyArtistInfo()
+    {
+        ArtistConfigNew artist = FindFirstArtistFromConfig();
+        if (artist == null)
+        {
+            Debug.Log("ArtworkManagerNew: No artist info found in exhibition data.");
+            return;
+        }
+
+        if (artistNameText != null)
+        {
+            artistNameText.text = artist.fullName ?? string.Empty;
+            Debug.Log($"ArtworkManagerNew: Applied artist name: {artist.fullName}");
+        }
+        else
+        {
+            Debug.Log("ArtworkManagerNew: No TMP_Text assigned for artist name.");
+        }
+
+        if (artistStatementText != null)
+        {
+            artistStatementText.text = artist.statement ?? string.Empty;
+            Debug.Log($"ArtworkManagerNew: Applied artist statement (length: {artist.statement?.Length ?? 0})");
+        }
+        else
+        {
+            Debug.Log("ArtworkManagerNew: No TMP_Text assigned for artist statement.");
+        }
+    }
+
+    /// <summary>
+    /// Finds the first artist from the exhibition config.
+    /// </summary>
+    private ArtistConfigNew FindFirstArtistFromConfig()
+    {
+        if (currentConfig?.data == null)
+        {
+            return null;
+        }
+
+        foreach (var exhibition in currentConfig.data)
+        {
+            if (exhibition?.artist != null && exhibition.artist.Count > 0)
+            {
+                return exhibition.artist[0];
+            }
+        }
+
+        return null;
     }
 
     /// <summary>
@@ -792,6 +1087,8 @@ public class ArtworkManagerNew : MonoBehaviour
     /// <summary>
     /// Instantiates the FrameLayout prefab for the given layoutId on the DisplayWall that matches wallId.
     /// Parent is set to the DisplayWall's transform, with zeroed local position/rotation.
+    /// If the wall's UseSlots is true and wallConfig provides startSlot/slotSpan, the layout will be
+    /// positioned at the center of those slots.
     /// Returns the instantiated FrameLayout, or null if anything is missing.
     ///
     /// After instantiation, all ArtworkFrame children in the layout have their local Z position
@@ -854,6 +1151,36 @@ public class ArtworkManagerNew : MonoBehaviour
     }
 
     /// <summary>
+    /// Positions a layout instance based on slot configuration if the wall uses slots.
+    /// If UseSlots is true, the layout will be positioned at the center of the slots
+    /// defined by startSlot and slotSpan.
+    /// </summary>
+    private void ApplySlotBasedPositioning(FrameLayout layoutInstance, DisplayWall wall, WallsConfigNew wallConfig)
+    {
+        if (layoutInstance == null || wall == null || wallConfig == null)
+            return;
+
+        if (!wall.UseSlots)
+        {
+            // Slot-based positioning is disabled, keep default position
+            return;
+        }
+
+        // Calculate the center position based on startSlot and slotSpan
+        Vector3 slotCenter = wall.CalculateSlotCenterPosition(wallConfig.startSlot, wallConfig.slotSpan);
+        if (slotCenter == Vector3.zero)
+        {
+            Debug.LogWarning($"ArtworkManagerNew: Could not calculate slot center for wall '{wall.name}' with startSlot={wallConfig.startSlot}, slotSpan={wallConfig.slotSpan}. Using default position.");
+            return;
+        }
+
+        // Set the layout's world position to the calculated slot center
+        layoutInstance.transform.position = slotCenter;
+
+        Debug.Log($"ArtworkManagerNew: Positioned layout '{layoutInstance.name}' on wall '{wall.name}' at slot center (startSlot={wallConfig.startSlot}, slotSpan={wallConfig.slotSpan}, position={slotCenter})");
+    }
+
+    /// <summary>
     /// Convenience helper: given an ExhibitionConfigNew entry, instantiate FrameLayout
     /// instances for all of its walls using each wall's layoutId and wallId.
     /// Returns the first successfully instantiated FrameLayout (or null if none succeed).
@@ -874,9 +1201,19 @@ public class ArtworkManagerNew : MonoBehaviour
                 continue;
 
             var layoutInstance = InstantiateLayoutOnWall(wallConfig.layoutId, wallConfig.wallId);
-            if (layoutInstance != null && firstInstance == null)
+            if (layoutInstance != null)
             {
-                firstInstance = layoutInstance;
+                // Apply slot-based positioning if the wall uses slots
+                var wall = GetDisplayWallForWallId(wallConfig.wallId);
+                if (wall != null)
+                {
+                    ApplySlotBasedPositioning(layoutInstance, wall, wallConfig);
+                }
+
+                if (firstInstance == null)
+                {
+                    firstInstance = layoutInstance;
+                }
             }
         }
 
@@ -914,6 +1251,14 @@ public class ArtworkManagerNew : MonoBehaviour
                 if (layoutInstance == null)
                 {
                     Debug.LogWarning($"ArtworkManagerNew: Failed to instantiate layout '{layoutId}' on wall '{wallId}'.");
+                    continue;
+                }
+
+                // Apply slot-based positioning if the wall uses slots
+                var wall = GetDisplayWallForWallId(wallId);
+                if (wall != null)
+                {
+                    ApplySlotBasedPositioning(layoutInstance, wall, wallConfig);
                 }
             }
         }
@@ -950,6 +1295,13 @@ public class ArtworkManagerNew : MonoBehaviour
                 {
                     Debug.LogWarning($"ArtworkManagerNew: Failed to instantiate layout '{layoutId}' on wall '{wallId}' during sequential build.");
                     continue;
+                }
+
+                // Apply slot-based positioning if the wall uses slots
+                var wall = GetDisplayWallForWallId(wallId);
+                if (wall != null)
+                {
+                    ApplySlotBasedPositioning(layoutInstance, wall, wallConfig);
                 }
 
                 // Apply images for this one layout before moving to the next
@@ -1111,6 +1463,7 @@ public class ArtworkManagerNew : MonoBehaviour
     /// <summary>
     /// Downloads an image from a URL and assigns it to the given ArtworkFrame's texture.
     /// Also updates download progress counters and fires progress events.
+    /// Retries failed downloads up to maxRetryAttempts times.
     /// </summary>
     private IEnumerator LoadTextureIntoFrame(string imageUrl, ArtworkFrame frame)
     {
@@ -1156,29 +1509,62 @@ public class ArtworkManagerNew : MonoBehaviour
 
         Debug.Log($"ArtworkManagerNew: Loading image for frame '{frame.name}' from URL: {imageUrl}");
 
-        UnityWebRequest imageRequest = UnityWebRequestTexture.GetTexture(imageUrl);
-        imageRequest.timeout = (int)apiTimeoutSeconds;
+        bool downloadSucceeded = false;
+        Texture2D downloadedTexture = null;
 
-        yield return imageRequest.SendWebRequest();
+        // Retry loop for failed downloads
+        for (int attempt = 0; attempt <= maxRetryAttempts; attempt++)
+        {
+            if (attempt > 0)
+            {
+                Debug.Log($"ArtworkManagerNew: Retry attempt {attempt}/{maxRetryAttempts} for image: {imageUrl}");
+                yield return new WaitForSeconds(retryDelaySeconds);
+            }
+
+            using (UnityWebRequest imageRequest = UnityWebRequestTexture.GetTexture(imageUrl))
+            {
+                imageRequest.timeout = (int)apiTimeoutSeconds;
+
+                yield return imageRequest.SendWebRequest();
 
 #if UNITY_2020_2_OR_NEWER
-        if (imageRequest.result == UnityWebRequest.Result.Success)
+                bool success = imageRequest.result == UnityWebRequest.Result.Success;
 #else
-        if (!imageRequest.isNetworkError && !imageRequest.isHttpError)
+                bool success = !imageRequest.isNetworkError && !imageRequest.isHttpError;
 #endif
+
+                if (success)
+                {
+                    downloadedTexture = DownloadHandlerTexture.GetContent(imageRequest);
+                    if (downloadedTexture != null && downloadedTexture.width > 0 && downloadedTexture.height > 0)
+                    {
+                        downloadSucceeded = true;
+                        break;
+                    }
+                    else
+                    {
+                        Debug.LogWarning($"ArtworkManagerNew: Downloaded texture is invalid for URL: {imageUrl}");
+                    }
+                }
+                else
+                {
+                    Debug.LogWarning($"ArtworkManagerNew: Failed to load image (attempt {attempt + 1}/{maxRetryAttempts + 1}) from URL: {imageUrl}. Error: {imageRequest.error}");
+                }
+            }
+        }
+
+        if (downloadSucceeded && downloadedTexture != null)
         {
-            Texture2D texture = DownloadHandlerTexture.GetContent(imageRequest);
-            texture = FlipTextureVertically(texture);
-            WebGLMediaCache.StoreTexture(imageUrl, texture);
-            frame.SetTexture(texture);
+            downloadedTexture = FlipTextureVertically(downloadedTexture);
+            WebGLMediaCache.StoreTexture(imageUrl, downloadedTexture);
+            frame.SetTexture(downloadedTexture);
+            Debug.Log($"ArtworkManagerNew: Successfully loaded image for frame '{frame.name}'");
         }
         else
         {
-            Debug.LogWarning($"ArtworkManagerNew: Failed to load image from URL: {imageUrl}. Error: {imageRequest.error}");
+            Debug.LogError($"ArtworkManagerNew: Failed to load image after {maxRetryAttempts + 1} attempts from URL: {imageUrl}");
             frame.ClearTexture();
         }
-
-        imageRequest.Dispose();
 
         if (willCountThisImage)
         {
@@ -1253,6 +1639,18 @@ public class ExhibitionConfigNew
     public string userId;
     public string createdAt;
     public string updatedAt;
+
+    /// <summary>
+    /// Optional preview image for the exhibition (cover/thumbnail).
+    /// Matches the "previewImage" object from the API.
+    /// </summary>
+    public ImageConfigNew previewImage;
+
+    /// <summary>
+    /// Optional video associated with the exhibition (e.g. intro or walkthrough).
+    /// Matches the "video" object from the API.
+    /// </summary>
+    public ImageConfigNew video;
 
     /// <summary>
     /// Optional music clip URL associated with this exhibition. This is expected to be
@@ -1359,16 +1757,30 @@ public class PaintingConfigNew
     public List<ImageConfigNew> images;
     public List<FrameConfigNew> frames;
     public ImageConfigNew mainImage;
+    public bool sold;
+    public bool favourite;
+    public bool cart;
+    public bool priceOnRequest;
 }
 
 /// <summary>
-/// Tag information (e.g. { "name": "love", "id": "..." }).
+/// Tag information (e.g. { "name": "canvas", "exist": true }).
 /// </summary>
 [Serializable]
 public class TagConfigNew
 {
     public string name;
-    public string id; // optional in JSON
+
+    /// <summary>
+    /// True when the tag exists in the master tag set (API field "exist").
+    /// </summary>
+    public bool exist;
+
+    /// <summary>
+    /// Optional internal identifier, kept for backward compatibility if the API ever
+    /// provides an "id" field for tags.
+    /// </summary>
+    public string id;
 }
 
 /// <summary>

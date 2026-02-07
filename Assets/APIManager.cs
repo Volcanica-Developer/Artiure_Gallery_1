@@ -3,6 +3,7 @@ using System.Collections;
 using System.Text;
 using UnityEngine;
 using UnityEngine.Networking;
+using UnityEngine.UI;
 
 [Serializable]
 public class CartItemRegion
@@ -89,6 +90,54 @@ public class APIManager : MonoBehaviour
 {
     private const string CartUrl = "https://stg.artiure.com/api/user/cart";
     private const string FavouriteUrl = "https://stg.artiure.com/api/user/favourite";
+
+    [SerializeField] private Button favoriteBtn;
+    [SerializeField] private Button cartBtn;
+
+    private void Start()
+    {
+
+    }
+
+    #region Public button-friendly API
+
+    // These four methods are intended to be wired directly to UI Buttons via the Inspector.
+    // They currently forward to the existing "hardcoded" implementations, so you can
+    // easily replace the builders later without changing the button wiring.
+
+    /// <summary>
+    /// Adds the configured item to the cart. Wire this to an "Add to Cart" button.
+    /// </summary>
+    public void AddToCart()
+    {
+        AddHardcodedItemToCart();
+    }
+
+    /// <summary>
+    /// Removes the configured item from the cart. Wire this to a "Remove from Cart" button.
+    /// </summary>
+    public void RemoveFromCart()
+    {
+        RemoveHardcodedItemFromCart();
+    }
+
+    /// <summary>
+    /// Adds the configured item to favourites. Wire this to an "Add to Favourite" button.
+    /// </summary>
+    public void AddToFavourite()
+    {
+        AddHardcodedItemToFavourite();
+    }
+
+    /// <summary>
+    /// Removes the configured item from favourites. Wire this to a "Remove from Favourite" button.
+    /// </summary>
+    public void RemoveFromFavourite()
+    {
+        RemoveHardcodedItemFromFavourite();
+    }
+
+    #endregion
 
     // Call this from another script, a UI Button, or manually in the Inspector
     public void AddHardcodedItemToCart()

@@ -34,6 +34,24 @@ public class InformationScreenUiManager : MonoBehaviour
     [Tooltip("The PaintingConfigNew currently selected by the player.")]
     [SerializeField] private PaintingConfigNew _currentPainting;
 
+    [Header("Cart / Favourite State")]
+    [Tooltip("True when the current painting is marked as added to the user's cart.")]
+    [SerializeField] private bool isAddedToCart = false;
+
+    [Tooltip("True when the current painting is marked as added to the user's favourites.")]
+    [SerializeField] private bool isAddedToFavorite = false;
+
+    [Header("Cart / Favourite Buttons")]
+    [Tooltip("Button used to toggle add/remove cart for the current painting.")]
+    [SerializeField] private Button addToCart;
+
+    [Tooltip("Button used to toggle add/remove favourite for the current painting.")]
+    [SerializeField] private Button addToFavorite;
+
+    [Header("API Manager")]
+    [Tooltip("Reference to the APIManager that handles cart and favourite API calls.")]
+    [SerializeField] private APIManager apiManager;
+
     [Header("UI Bindings")]
     [Tooltip("Main artwork image UI element (e.g., on the information panel).")]
     [SerializeField] private Image mainImage;
@@ -64,6 +82,23 @@ public class InformationScreenUiManager : MonoBehaviour
     private void Awake()
     {
         RegisterInstanceForPlatform();
+
+        // Resolve APIManager automatically if not wired in the Inspector.
+        if (apiManager == null)
+        {
+            apiManager = FindFirstObjectByType<APIManager>();
+        }
+
+        // Wire up button listeners for cart / favourite toggles.
+        if (addToCart != null)
+        {
+            addToCart.onClick.AddListener(OnAddToCartButtonClicked);
+        }
+
+        if (addToFavorite != null)
+        {
+            addToFavorite.onClick.AddListener(OnAddToFavoriteButtonClicked);
+        }
     }
 
     private void OnEnable()
@@ -77,6 +112,17 @@ public class InformationScreenUiManager : MonoBehaviour
         if (Instance == this)
         {
             Instance = null;
+        }
+
+        // Clean up button listeners
+        if (addToCart != null)
+        {
+            addToCart.onClick.RemoveListener(OnAddToCartButtonClicked);
+        }
+
+        if (addToFavorite != null)
+        {
+            addToFavorite.onClick.RemoveListener(OnAddToFavoriteButtonClicked);
         }
     }
 
@@ -200,6 +246,54 @@ public class InformationScreenUiManager : MonoBehaviour
     public PaintingConfigNew GetCurrentPainting()
     {
         return _currentPainting;
+    }
+
+    /// <summary>
+    /// Called when the Add to Cart button is pressed. Toggles add/remove cart
+    /// based on the current isAddedToCart flag.
+    /// </summary>
+    private void OnAddToCartButtonClicked()
+    {
+        if (apiManager == null)
+        {
+            Debug.LogWarning("InformationScreenUiManager: APIManager reference is not set; cannot modify cart.");
+            return;
+        }
+
+        if (!isAddedToCart)
+        {
+            apiManager.AddToCart();
+            isAddedToCart = true;
+        }
+        else
+        {
+            apiManager.RemoveFromCart();
+            isAddedToCart = false;
+        }
+    }
+
+    /// <summary>
+    /// Called when the Add to Favourite button is pressed. Toggles add/remove
+    /// favourite based on the current isAddedToFavorite flag.
+    /// </summary>
+    private void OnAddToFavoriteButtonClicked()
+    {
+        if (apiManager == null)
+        {
+            Debug.LogWarning("InformationScreenUiManager: APIManager reference is not set; cannot modify favourite.");
+            return;
+        }
+
+        if (!isAddedToFavorite)
+        {
+            apiManager.AddToFavourite();
+            isAddedToFavorite = true;
+        }
+        else
+        {
+            apiManager.RemoveFromFavourite();
+            isAddedToFavorite = false;
+        }
     }
 
     /// <summary>
