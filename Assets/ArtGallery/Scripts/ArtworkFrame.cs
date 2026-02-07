@@ -20,6 +20,10 @@ public class ArtworkFrame : MonoBehaviour, IPointerEnterHandler, IPointerExitHan
     [SerializeField] private bool useSpriteRenderer = false;
     [Tooltip("The GameObject containing the SpriteRenderer for displaying artwork. Its transform will be scaled to match artworkPlane.")]
     [SerializeField] private GameObject spriteRendererObject;
+    [Tooltip("Flip the sprite horizontally to correct orientation.")]
+    [SerializeField] private bool flipSpriteX = false;
+    [Tooltip("Flip the sprite vertically to correct orientation.")]
+    [SerializeField] private bool flipSpriteY = true;
     
     [Header("Frame Pieces (Optional - for separate top/right/left/bottom)")]
     [SerializeField] private bool useFramePieces = false;
@@ -259,6 +263,10 @@ public class ArtworkFrame : MonoBehaviour, IPointerEnterHandler, IPointerExitHan
         );
         spriteRendererComponent.sprite = sprite;
 
+        // Apply flip settings to prevent inverted image
+        spriteRendererComponent.flipX = flipSpriteX;
+        spriteRendererComponent.flipY = flipSpriteY;
+
         // Update sprite renderer size to match artwork plane
         UpdateSpriteRendererSize();
     }
@@ -360,7 +368,7 @@ public class ArtworkFrame : MonoBehaviour, IPointerEnterHandler, IPointerExitHan
     }
 
     /// <summary>
-    /// Ensures the sprite renderer component reference is valid.
+    /// Ensures the sprite renderer component reference is valid and applies flip settings.
     /// </summary>
     private void EnsureSpriteRendererComponent()
     {
@@ -371,6 +379,13 @@ public class ArtworkFrame : MonoBehaviour, IPointerEnterHandler, IPointerExitHan
             {
                 spriteRendererComponent = spriteRendererObject.AddComponent<SpriteRenderer>();
             }
+        }
+
+        // Apply flip settings to prevent inverted image
+        if (spriteRendererComponent != null)
+        {
+            spriteRendererComponent.flipX = flipSpriteX;
+            spriteRendererComponent.flipY = flipSpriteY;
         }
     }
 
