@@ -2,6 +2,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Text;
+using System.Runtime.InteropServices;
 using UnityEngine;
 using UnityEngine.Networking;
 using UnityEngine.Video;
@@ -24,6 +25,11 @@ using TMPro;
 /// </summary>
 public class ArtworkManagerNew : MonoBehaviour
 {
+#if UNITY_WEBGL && !UNITY_EDITOR
+    [DllImport("__Internal")]
+    private static extern string GetExhibitionIdFromUrl();
+#endif
+
     [Header("Data Source")]
     [Tooltip("If true, load JSON from a remote API instead of a local Resources JSON file.")]
     [SerializeField] private bool useAPI = false;
@@ -32,7 +38,7 @@ public class ArtworkManagerNew : MonoBehaviour
     [SerializeField] private string resourcesJsonPath = "ArtworkConfig_New"; // Resources/ArtworkConfig_New.json
 
     [Header("API Configuration")]
-    [SerializeField] private string apiUrl = "https://stg.artiure.com/api/artist/exhibition/getExhibitionFromId";
+    [SerializeField] private string apiUrl = "";
 
     [Tooltip("Exhibition UUID to request from the API. For now this can be hard-coded; later it can come from user selection.")]
     [SerializeField] private string exhibitionId = "e459a070-3f67-4624-8d33-4dc33d1d6af0";
@@ -151,11 +157,109 @@ public class ArtworkManagerNew : MonoBehaviour
 
     private void Awake()
     {
+        // Use global config URL if apiUrl is not set in Inspector
+        if (string.IsNullOrEmpty(apiUrl))
+        {
+            apiUrl = AppConfig.ExhibitionUrl;
+        }
+
+        // In WebGL builds, try to extract exhibition ID from the browser URL
+        TryExtractExhibitionIdFromUrl();
+
         // Populate displayWalls with all DisplayWall components in the scene if none are assigned.
         if (displayWalls == null || displayWalls.Count == 0)
         {
             RefreshDisplayWalls();
         }
+    }
+
+    /// <summary>
+    /// Attempts to extract the exhibition ID from the browser URL in WebGL builds.
+    /// URL format expected: /exhibition/{exhibition-uuid}
+    /// Fallback chain:
+    /// 1. Try jslib GetExhibitionIdFromUrl()
+    /// 2. Try Application.absoluteURL with regex parsing
+    /// 3. Use the hardcoded exhibitionId from Inspector
+    /// </summary>
+    private void TryExtractExhibitionIdFromUrl()
+    {
+#if UNITY_WEBGL && !UNITY_EDITOR
+        string extractedId = null;
+
+        // Attempt 1: Try jslib method
+        try
+        {
+            extractedId = GetExhibitionIdFromUrl();
+            if (!string.IsNullOrEmpty(extractedId))
+            {
+                Debug.Log($"ArtworkManagerNew: Extracted exhibition ID from jslib: {extractedId}");
+                exhibitionId = extractedId;
+                return;
+            }
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning($"ArtworkManagerNew: jslib GetExhibitionIdFromUrl failed: {ex.Message}");
+        }
+
+        // Attempt 2: Try Application.absoluteURL
+        extractedId = TryParseExhibitionIdFromAbsoluteUrl();
+        if (!string.IsNullOrEmpty(extractedId))
+        {
+            Debug.Log($"ArtworkManagerNew: Extracted exhibition ID from Application.absoluteURL: {extractedId}");
+            exhibitionId = extractedId;
+            return;
+        }
+
+        // Fallback: Use hardcoded exhibitionId
+        Debug.Log($"ArtworkManagerNew: Could not extract exhibition ID from URL, using fallback: {exhibitionId}");
+#else
+        // In Editor, also try Application.absoluteURL for testing (usually empty)
+        string extractedId = TryParseExhibitionIdFromAbsoluteUrl();
+        if (!string.IsNullOrEmpty(extractedId))
+        {
+            Debug.Log($"ArtworkManagerNew: Extracted exhibition ID from Application.absoluteURL: {extractedId}");
+            exhibitionId = extractedId;
+            return;
+        }
+        Debug.Log($"ArtworkManagerNew: Using configured exhibition ID: {exhibitionId}");
+#endif
+    }
+
+    /// <summary>
+    /// Parses the exhibition ID from Application.absoluteURL using regex.
+    /// Returns null if parsing fails or URL doesn't contain exhibition ID.
+    /// </summary>
+    private string TryParseExhibitionIdFromAbsoluteUrl()
+    {
+        try
+        {
+            string absoluteUrl = Application.absoluteURL;
+            if (string.IsNullOrEmpty(absoluteUrl))
+            {
+                Debug.Log("ArtworkManagerNew: Application.absoluteURL is empty.");
+                return null;
+            }
+
+            Debug.Log($"ArtworkManagerNew: Application.absoluteURL = {absoluteUrl}");
+
+            // Match /exhibition/{uuid} pattern
+            var match = System.Text.RegularExpressions.Regex.Match(
+                absoluteUrl,
+                @"/exhibition/([a-zA-Z0-9-]+)"
+            );
+
+            if (match.Success && match.Groups.Count > 1)
+            {
+                return match.Groups[1].Value;
+            }
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning($"ArtworkManagerNew: Failed to parse Application.absoluteURL: {ex.Message}");
+        }
+
+        return null;
     }
 
     private void Start()

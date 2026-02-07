@@ -88,11 +88,8 @@ public class DeleteCartItemResponse
 
 public class APIManager : MonoBehaviour
 {
-    private const string CartUrl = "https://stg.artiure.com/api/user/cart";
-    private const string FavouriteUrl = "https://stg.artiure.com/api/user/favourite";
-
-    [SerializeField] private Button favoriteBtn;
-    [SerializeField] private Button cartBtn;
+    private static string CartUrl => AppConfig.CartUrl;
+    private static string FavouriteUrl => AppConfig.FavouriteUrl;
 
     private void Start()
     {
