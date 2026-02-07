@@ -15,6 +15,12 @@ public class ArtworkFrame : MonoBehaviour, IPointerEnterHandler, IPointerExitHan
     [SerializeField] private Material frameMaterial;
     [SerializeField] private Material artworkMaterial;
     
+    [Header("Sprite Renderer Fallback (Optional)")]
+    [Tooltip("If enabled, uses a SpriteRenderer instead of/alongside the material-based artwork plane.")]
+    [SerializeField] private bool useSpriteRenderer = false;
+    [Tooltip("The GameObject containing the SpriteRenderer for displaying artwork. Its transform will be scaled to match artworkPlane.")]
+    [SerializeField] private GameObject spriteRendererObject;
+    
     [Header("Frame Pieces (Optional - for separate top/right/left/bottom)")]
     [SerializeField] private bool useFramePieces = false;
     [SerializeField] private GameObject frameTop;
@@ -104,6 +110,7 @@ public class ArtworkFrame : MonoBehaviour, IPointerEnterHandler, IPointerExitHan
     [SerializeField] private float infoClickMaxDistance = 0.1f;
     
     private Material artworkMatInstance;
+    private SpriteRenderer spriteRendererComponent;
     // private Vector3 originalScale;
     // private Vector3 targetScale;
     // private bool isHovered = false;
@@ -224,8 +231,56 @@ public class ArtworkFrame : MonoBehaviour, IPointerEnterHandler, IPointerExitHan
             renderer.material = artworkMatInstance;
         }
 
+        // Also apply to sprite renderer if enabled
+        if (useSpriteRenderer && spriteRendererComponent != null)
+        {
+            SetSpriteFromTexture(texture);
+        }
+
         // Important: DO NOT change artworkPlane scale or frame size here; these are
         // now controlled by the prefab so all artworks in a layout use consistent size.
+    }
+
+    /// <summary>
+    /// Sets a Sprite on the SpriteRenderer from a Texture2D.
+    /// Creates a sprite that covers the full texture.
+    /// </summary>
+    private void SetSpriteFromTexture(Texture2D texture)
+    {
+        if (spriteRendererComponent == null || texture == null)
+            return;
+
+        // Create a sprite from the texture (full rect, centered pivot)
+        Sprite sprite = Sprite.Create(
+            texture,
+            new Rect(0, 0, texture.width, texture.height),
+            new Vector2(0.5f, 0.5f),
+            100f // pixels per unit - will be compensated by scale
+        );
+        spriteRendererComponent.sprite = sprite;
+
+        // Update sprite renderer size to match artwork plane
+        UpdateSpriteRendererSize();
+    }
+
+    /// <summary>
+    /// Sets a Sprite directly on the SpriteRenderer.
+    /// </summary>
+    public void SetSprite(Sprite sprite)
+    {
+        if (!useSpriteRenderer)
+        {
+            Debug.LogWarning("ArtworkFrame: useSpriteRenderer is disabled. Enable it to use SetSprite().");
+            return;
+        }
+
+        EnsureSpriteRendererComponent();
+
+        if (spriteRendererComponent != null)
+        {
+            spriteRendererComponent.sprite = sprite;
+            UpdateSpriteRendererSize();
+        }
     }
 
     /// <summary>
@@ -233,13 +288,19 @@ public class ArtworkFrame : MonoBehaviour, IPointerEnterHandler, IPointerExitHan
     /// </summary>
     public void ClearTexture()
     {
-        if (artworkPlane == null)
-            return;
-
-        Renderer renderer = artworkPlane.GetComponent<Renderer>();
-        if (renderer != null && renderer.material != null && renderer.material.HasProperty("_MainTex"))
+        if (artworkPlane != null)
         {
-            renderer.material.mainTexture = null;
+            Renderer renderer = artworkPlane.GetComponent<Renderer>();
+            if (renderer != null && renderer.material != null && renderer.material.HasProperty("_MainTex"))
+            {
+                renderer.material.mainTexture = null;
+            }
+        }
+
+        // Also clear sprite renderer if enabled
+        if (useSpriteRenderer && spriteRendererComponent != null)
+        {
+            spriteRendererComponent.sprite = null;
         }
     }
     
@@ -290,6 +351,63 @@ public class ArtworkFrame : MonoBehaviour, IPointerEnterHandler, IPointerExitHan
         {
             frameRenderer.material = frameMaterial;
         }
+
+        // Setup sprite renderer if enabled
+        if (useSpriteRenderer)
+        {
+            EnsureSpriteRendererComponent();
+        }
+    }
+
+    /// <summary>
+    /// Ensures the sprite renderer component reference is valid.
+    /// </summary>
+    private void EnsureSpriteRendererComponent()
+    {
+        if (spriteRendererObject != null && spriteRendererComponent == null)
+        {
+            spriteRendererComponent = spriteRendererObject.GetComponent<SpriteRenderer>();
+            if (spriteRendererComponent == null)
+            {
+                spriteRendererComponent = spriteRendererObject.AddComponent<SpriteRenderer>();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Updates the sprite renderer GameObject's scale to match the artwork plane dimensions.
+    /// Call this whenever the artwork plane size changes.
+    /// </summary>
+    public void UpdateSpriteRendererSize()
+    {
+        if (!useSpriteRenderer || spriteRendererObject == null || artworkPlane == null)
+            return;
+
+        EnsureSpriteRendererComponent();
+
+        if (spriteRendererComponent == null || spriteRendererComponent.sprite == null)
+        {
+            // Just match the artwork plane scale directly if no sprite is set
+            Vector3 artworkScale = artworkPlane.transform.localScale;
+            spriteRendererObject.transform.localScale = new Vector3(artworkScale.x, artworkScale.y, 1f);
+            return;
+        }
+
+        // Calculate scale to match artwork plane size
+        // Sprite size in world units = (sprite.rect.size / sprite.pixelsPerUnit) * transform.localScale
+        // We want: spriteWorldSize = artworkPlaneScale
+        // So: localScale = artworkPlaneScale * pixelsPerUnit / sprite.rect.size
+
+        Sprite sprite = spriteRendererComponent.sprite;
+        Vector3 artworkScale2 = artworkPlane.transform.localScale;
+
+        float spriteWidthUnits = sprite.rect.width / sprite.pixelsPerUnit;
+        float spriteHeightUnits = sprite.rect.height / sprite.pixelsPerUnit;
+
+        float scaleX = artworkScale2.x / Mathf.Max(0.0001f, spriteWidthUnits);
+        float scaleY = artworkScale2.y / Mathf.Max(0.0001f, spriteHeightUnits);
+
+        spriteRendererObject.transform.localScale = new Vector3(scaleX, scaleY, 1f);
     }
     
     /// <summary>
@@ -347,6 +465,10 @@ public class ArtworkFrame : MonoBehaviour, IPointerEnterHandler, IPointerExitHan
 
         Vector3 currentScale = artworkPlane.transform.localScale;
         artworkPlane.transform.localScale = new Vector3(newArtWidthUnits, newArtHeightUnits, currentScale.z);
+        
+        // Update sprite renderer size to match
+        UpdateSpriteRendererSize();
+        
         // Now recompute frame pieces/collider around the new artwork size.
         UpdateFrameSize();
     }
@@ -385,6 +507,9 @@ public class ArtworkFrame : MonoBehaviour, IPointerEnterHandler, IPointerExitHan
 
         Vector3 currentScale = artworkPlane.transform.localScale;
         artworkPlane.transform.localScale = new Vector3(newArtWidthUnits, newArtHeightUnits, currentScale.z);
+
+        // Update sprite renderer size to match
+        UpdateSpriteRendererSize();
 
         // Refresh frame pieces and collider to match the new outer size
         UpdateFrameSize();
@@ -435,6 +560,9 @@ public class ArtworkFrame : MonoBehaviour, IPointerEnterHandler, IPointerExitHan
             );
             collider.center = Vector3.zero;
         }
+
+        // Update sprite renderer size to match artwork plane
+        UpdateSpriteRendererSize();
     }
     
     // Store original X and Z scales to keep them constant

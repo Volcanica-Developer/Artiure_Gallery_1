@@ -73,6 +73,8 @@ public class ArtworkManagerNew : MonoBehaviour
     [Header("Image Download Progress")]
     [SerializeField] private int totalImagesToDownload = 0;
     [SerializeField] private int downloadedImagesCount = 0;
+    [SerializeField] private int successfulDownloads = 0;
+    [SerializeField] private int failedDownloads = 0;
 
     [Header("Download Retry Settings")]
     [Tooltip("Number of retry attempts for failed image downloads.")]
@@ -80,6 +82,9 @@ public class ArtworkManagerNew : MonoBehaviour
 
     [Tooltip("Delay in seconds between retry attempts.")]
     [SerializeField] private float retryDelaySeconds = 1f;
+
+    [Tooltip("Timeout in seconds specifically for image downloads (separate from API timeout).")]
+    [SerializeField] private float imageDownloadTimeoutSeconds = 30f;
 
     [Header("Music")]
     [Tooltip("Optional AudioSource used to play exhibition music fetched from the API.")]
@@ -428,6 +433,8 @@ public class ArtworkManagerNew : MonoBehaviour
             // Count how many images we expect to download for this config so UI can track progress.
             totalImagesToDownload = CountImagesToDownload();
             downloadedImagesCount = 0;
+            successfulDownloads = 0;
+            failedDownloads = 0;
             OnImageDownloadStarted?.Invoke(totalImagesToDownload);
 
             int exhibitionCount = currentConfig.data != null ? currentConfig.data.Count : 0;
@@ -1511,26 +1518,30 @@ public class ArtworkManagerNew : MonoBehaviour
 
         bool downloadSucceeded = false;
         Texture2D downloadedTexture = null;
+        string lastError = "";
 
         // Retry loop for failed downloads
         for (int attempt = 0; attempt <= maxRetryAttempts; attempt++)
         {
             if (attempt > 0)
             {
-                Debug.Log($"ArtworkManagerNew: Retry attempt {attempt}/{maxRetryAttempts} for image: {imageUrl}");
+                Debug.LogWarning($"ArtworkManagerNew: Retry attempt {attempt}/{maxRetryAttempts} for image: {imageUrl} (Previous error: {lastError})");
                 yield return new WaitForSeconds(retryDelaySeconds);
             }
 
             using (UnityWebRequest imageRequest = UnityWebRequestTexture.GetTexture(imageUrl))
             {
-                imageRequest.timeout = (int)apiTimeoutSeconds;
+                // Use dedicated image download timeout (usually longer than API timeout)
+                imageRequest.timeout = Mathf.CeilToInt(imageDownloadTimeoutSeconds);
 
                 yield return imageRequest.SendWebRequest();
 
 #if UNITY_2020_2_OR_NEWER
                 bool success = imageRequest.result == UnityWebRequest.Result.Success;
+                lastError = imageRequest.result.ToString();
 #else
                 bool success = !imageRequest.isNetworkError && !imageRequest.isHttpError;
+                lastError = imageRequest.error ?? "Unknown error";
 #endif
 
                 if (success)
@@ -1539,16 +1550,19 @@ public class ArtworkManagerNew : MonoBehaviour
                     if (downloadedTexture != null && downloadedTexture.width > 0 && downloadedTexture.height > 0)
                     {
                         downloadSucceeded = true;
+                        Debug.Log($"ArtworkManagerNew: Successfully downloaded image ({downloadedTexture.width}x{downloadedTexture.height}) for frame '{frame.name}' on attempt {attempt + 1}");
                         break;
                     }
                     else
                     {
-                        Debug.LogWarning($"ArtworkManagerNew: Downloaded texture is invalid for URL: {imageUrl}");
+                        lastError = $"Invalid texture dimensions: {downloadedTexture?.width ?? 0}x{downloadedTexture?.height ?? 0}";
+                        Debug.LogWarning($"ArtworkManagerNew: Downloaded texture is invalid for URL: {imageUrl}. {lastError}");
                     }
                 }
                 else
                 {
-                    Debug.LogWarning($"ArtworkManagerNew: Failed to load image (attempt {attempt + 1}/{maxRetryAttempts + 1}) from URL: {imageUrl}. Error: {imageRequest.error}");
+                    lastError = imageRequest.error ?? "Unknown error";
+                    Debug.LogWarning($"ArtworkManagerNew: Failed to load image (attempt {attempt + 1}/{maxRetryAttempts + 1}) from URL: {imageUrl}. Error: {lastError}");
                 }
             }
         }
@@ -1558,11 +1572,13 @@ public class ArtworkManagerNew : MonoBehaviour
             downloadedTexture = FlipTextureVertically(downloadedTexture);
             WebGLMediaCache.StoreTexture(imageUrl, downloadedTexture);
             frame.SetTexture(downloadedTexture);
-            Debug.Log($"ArtworkManagerNew: Successfully loaded image for frame '{frame.name}'");
+            successfulDownloads++;
+            Debug.Log($"ArtworkManagerNew: Successfully loaded and applied image for frame '{frame.name}'");
         }
         else
         {
-            Debug.LogError($"ArtworkManagerNew: Failed to load image after {maxRetryAttempts + 1} attempts from URL: {imageUrl}");
+            failedDownloads++;
+            Debug.LogError($"ArtworkManagerNew: FAILED to load image after {maxRetryAttempts + 1} attempts from URL: {imageUrl}\nFrame: {frame.name}\nLast Error: {lastError}\nThis frame will remain blank.");
             frame.ClearTexture();
         }
 
@@ -1582,6 +1598,18 @@ public class ArtworkManagerNew : MonoBehaviour
 
         if (totalImagesToDownload > 0 && downloadedImagesCount >= totalImagesToDownload)
         {
+            // Log summary of download results
+            Debug.Log($"=== ArtworkManagerNew: Image Download Complete ===");
+            Debug.Log($"Total images: {totalImagesToDownload}");
+            Debug.Log($"Successful: {successfulDownloads}");
+            Debug.Log($"Failed: {failedDownloads}");
+            Debug.Log($"Success rate: {(totalImagesToDownload > 0 ? (float)successfulDownloads / totalImagesToDownload * 100f : 0f):F1}%");
+            
+            if (failedDownloads > 0)
+            {
+                Debug.LogWarning($"ArtworkManagerNew: {failedDownloads} image(s) failed to download. Check the logs above for specific URLs and errors.");
+            }
+            
             OnAllImagesDownloaded?.Invoke();
         }
     }
