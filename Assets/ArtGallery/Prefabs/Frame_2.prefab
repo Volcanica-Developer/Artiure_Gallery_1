@@ -172,6 +172,8 @@ MonoBehaviour:
   artworkMaterial: {fileID: 2100000, guid: 74264dfe83b5dda4fa61619e53f3b1a9, type: 2}
   useSpriteRenderer: 1
   spriteRendererObject: {fileID: 2641903956385353503}
+  flipSpriteX: 1
+  flipSpriteY: 0
   useFramePieces: 1
   frameTop: {fileID: 6807967712551374443}
   frameRight: {fileID: 7267164379633622216}
@@ -235,6 +237,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::FrameLayout
   layoutId: 2
+  startSlot: -1
   frames: []
 --- !u!1 &5163303306789966033
 GameObject:

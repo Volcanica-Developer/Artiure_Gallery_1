@@ -2,7 +2,6 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Text;
-using System.Runtime.InteropServices;
 using UnityEngine;
 using UnityEngine.Networking;
 using UnityEngine.Video;
@@ -25,11 +24,6 @@ using TMPro;
 /// </summary>
 public class ArtworkManagerNew : MonoBehaviour
 {
-#if UNITY_WEBGL && !UNITY_EDITOR
-    [DllImport("__Internal")]
-    private static extern string GetExhibitionIdFromUrl();
-#endif
-
     [Header("Data Source")]
     [Tooltip("If true, load JSON from a remote API instead of a local Resources JSON file.")]
     [SerializeField] private bool useAPI = false;
@@ -113,6 +107,16 @@ public class ArtworkManagerNew : MonoBehaviour
     [Tooltip("TMP_Text component to display the artist's statement.")]
     [SerializeField] private TMP_Text artistStatementText;
 
+    [Header("Layout Rotation Override")]
+    [Tooltip("If enabled, spawned layouts will be rotated 180° on Y axis and downloaded images will NOT be vertically flipped. Use this for walls facing the opposite direction.")]
+    [SerializeField] private bool useRotatedLayoutMode = false;
+
+    /// <summary>
+    /// Returns true if rotated layout mode is enabled (180° Y rotation, no texture flip).
+    /// Other scripts (e.g., InformationScreenUiManager) can use this to adjust image display.
+    /// </summary>
+    public bool UseRotatedLayoutMode => useRotatedLayoutMode;
+
     /// <summary>
     /// The last successfully parsed configuration.
     /// </summary>
@@ -155,6 +159,8 @@ public class ArtworkManagerNew : MonoBehaviour
     /// </summary>
     public event Action OnAllImagesDownloaded;
 
+    public TMP_Text absoluteURLTxt;
+
     private void Awake()
     {
         // Use global config URL if apiUrl is not set in Inspector
@@ -164,6 +170,8 @@ public class ArtworkManagerNew : MonoBehaviour
         }
 
         // In WebGL builds, try to extract exhibition ID from the browser URL
+
+        
         TryExtractExhibitionIdFromUrl();
 
         // Populate displayWalls with all DisplayWall components in the scene if none are assigned.
@@ -174,36 +182,13 @@ public class ArtworkManagerNew : MonoBehaviour
     }
 
     /// <summary>
-    /// Attempts to extract the exhibition ID from the browser URL in WebGL builds.
+    /// Attempts to extract the exhibition ID from the browser URL using Application.absoluteURL.
     /// URL format expected: /exhibition/{exhibition-uuid}
-    /// Fallback chain:
-    /// 1. Try jslib GetExhibitionIdFromUrl()
-    /// 2. Try Application.absoluteURL with regex parsing
-    /// 3. Use the hardcoded exhibitionId from Inspector
+    /// Falls back to the hardcoded exhibitionId from Inspector if parsing fails.
     /// </summary>
     private void TryExtractExhibitionIdFromUrl()
     {
-#if UNITY_WEBGL && !UNITY_EDITOR
-        string extractedId = null;
-
-        // Attempt 1: Try jslib method
-        try
-        {
-            extractedId = GetExhibitionIdFromUrl();
-            if (!string.IsNullOrEmpty(extractedId))
-            {
-                Debug.Log($"ArtworkManagerNew: Extracted exhibition ID from jslib: {extractedId}");
-                exhibitionId = extractedId;
-                return;
-            }
-        }
-        catch (Exception ex)
-        {
-            Debug.LogWarning($"ArtworkManagerNew: jslib GetExhibitionIdFromUrl failed: {ex.Message}");
-        }
-
-        // Attempt 2: Try Application.absoluteURL
-        extractedId = TryParseExhibitionIdFromAbsoluteUrl();
+        string extractedId = GetAfterExhibition();
         if (!string.IsNullOrEmpty(extractedId))
         {
             Debug.Log($"ArtworkManagerNew: Extracted exhibition ID from Application.absoluteURL: {extractedId}");
@@ -213,17 +198,27 @@ public class ArtworkManagerNew : MonoBehaviour
 
         // Fallback: Use hardcoded exhibitionId
         Debug.Log($"ArtworkManagerNew: Could not extract exhibition ID from URL, using fallback: {exhibitionId}");
-#else
-        // In Editor, also try Application.absoluteURL for testing (usually empty)
-        string extractedId = TryParseExhibitionIdFromAbsoluteUrl();
-        if (!string.IsNullOrEmpty(extractedId))
-        {
-            Debug.Log($"ArtworkManagerNew: Extracted exhibition ID from Application.absoluteURL: {extractedId}");
-            exhibitionId = extractedId;
-            return;
-        }
-        Debug.Log($"ArtworkManagerNew: Using configured exhibition ID: {exhibitionId}");
-#endif
+    }
+
+    private string GetAfterExhibition()
+    {
+        string url = Application.absoluteURL;
+
+        if (string.IsNullOrEmpty(url))
+            return null;
+
+        const string key = "/exhibition/";
+
+        int index = url.IndexOf(key);
+
+        if (index == -1)
+            return null;
+
+        string result = url.Substring(index + key.Length);
+        result = result.TrimEnd('/');
+
+        absoluteURLTxt.text = result;
+        return result;
     }
 
     /// <summary>
@@ -234,6 +229,8 @@ public class ArtworkManagerNew : MonoBehaviour
     {
         try
         {
+            absoluteURLTxt.text = Application.absoluteURL;
+
             string absoluteUrl = Application.absoluteURL;
             if (string.IsNullOrEmpty(absoluteUrl))
             {
@@ -251,6 +248,7 @@ public class ArtworkManagerNew : MonoBehaviour
 
             if (match.Success && match.Groups.Count > 1)
             {
+                absoluteURLTxt.text = match.Groups[1].Value;
                 return match.Groups[1].Value;
             }
         }
@@ -1224,7 +1222,16 @@ public class ArtworkManagerNew : MonoBehaviour
 
         FrameLayout instance = Instantiate(layoutPrefab, wall.transform);
         instance.transform.localPosition = Vector3.zero;
-        instance.transform.localRotation = Quaternion.identity;
+        
+        // Apply 180° Y rotation if rotated layout mode is enabled
+        if (useRotatedLayoutMode)
+        {
+            instance.transform.localRotation = Quaternion.Euler(0f, 180f, 0f);
+        }
+        else
+        {
+            instance.transform.localRotation = Quaternion.identity;
+        }
 
         // Ensure its internal frame list is up-to-date.
         instance.RefreshFrames();
@@ -1314,6 +1321,9 @@ public class ArtworkManagerNew : MonoBehaviour
             var layoutInstance = InstantiateLayoutOnWall(wallConfig.layoutId, wallConfig.wallId);
             if (layoutInstance != null)
             {
+                // Store the startSlot on the layout for sorting purposes
+                layoutInstance.StartSlot = wallConfig.startSlot;
+
                 // Apply slot-based positioning if the wall uses slots
                 var wall = GetDisplayWallForWallId(wallConfig.wallId);
                 if (wall != null)
@@ -1407,6 +1417,9 @@ public class ArtworkManagerNew : MonoBehaviour
                     Debug.LogWarning($"ArtworkManagerNew: Failed to instantiate layout '{layoutId}' on wall '{wallId}' during sequential build.");
                     continue;
                 }
+
+                // Store the startSlot on the layout for sorting purposes
+                layoutInstance.StartSlot = wallConfig.startSlot;
 
                 // Apply slot-based positioning if the wall uses slots
                 var wall = GetDisplayWallForWallId(wallId);
@@ -1675,8 +1688,18 @@ public class ArtworkManagerNew : MonoBehaviour
 
         if (downloadSucceeded && downloadedTexture != null)
         {
+            // Always flip texture vertically (required for correct display on 3D quads)
             downloadedTexture = FlipTextureVertically(downloadedTexture);
+            
+            // Always store to cache so info screen can access it
             WebGLMediaCache.StoreTexture(imageUrl, downloadedTexture);
+            
+            // Flip sprite renderer horizontally when using rotated layout mode
+            if (useRotatedLayoutMode)
+            {
+                frame.SetSpriteFlipX(false);
+            }
+            
             frame.SetTexture(downloadedTexture);
             successfulDownloads++;
             Debug.Log($"ArtworkManagerNew: Successfully loaded and applied image for frame '{frame.name}'");

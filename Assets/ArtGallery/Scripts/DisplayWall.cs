@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.AI;
 using DG.Tweening;
 
 /// <summary>
@@ -53,6 +54,7 @@ public class DisplayWall : MonoBehaviour
     [SerializeField] private Ease moveEase = Ease.OutSine;
 
     private Tween currentTween;
+    private Coroutine navMeshFocusCoroutine;
 
     /// <summary>
     /// Legacy: focus this wall at its predefined standing point.
@@ -143,12 +145,19 @@ public class DisplayWall : MonoBehaviour
 
         var controllerTransform = controller.transform;
         var characterController = controller.GetComponent<CharacterController>();
+        var navMeshAgent = controller.NavMeshAgent;
+        bool useNavMesh = controller.UseNavMeshAgent && navMeshAgent != null && navMeshAgent.enabled;
 
-        // Stop any existing focus tween
+        // Stop any existing focus tween or coroutine
         if (currentTween != null && currentTween.IsActive())
         {
             currentTween.Kill();
             currentTween = null;
+        }
+        if (navMeshFocusCoroutine != null)
+        {
+            StopCoroutine(navMeshFocusCoroutine);
+            navMeshFocusCoroutine = null;
         }
 
         // Clear any residual movement/rotation input
@@ -160,24 +169,35 @@ public class DisplayWall : MonoBehaviour
         // Compute yaw-only rotation so that from the *standing point* we face the look position
         Vector3 toTarget = lookPosition - targetPosition;
         toTarget.y = 0f;
-        Quaternion targetRotation = toTarget.sqrMagnitude > 0.0001f
-            ? Quaternion.LookRotation(toTarget.normalized, Vector3.up)
-            : controllerTransform.rotation;
+        Quaternion targetRotation;
+        if (toTarget.sqrMagnitude > 0.0001f)
+        {
+            targetRotation = Quaternion.LookRotation(toTarget.normalized, Vector3.up);
+        }
+        else
+        {
+            // Fallback: preserve only current yaw, zero out X and Z
+            float currentYaw = controllerTransform.eulerAngles.y;
+            targetRotation = Quaternion.Euler(0f, currentYaw, 0f);
+        }
+
+        // If using NavMeshAgent, use pathfinding instead of tween
+        if (useNavMesh)
+        {
+            navMeshFocusCoroutine = StartCoroutine(NavMeshFocusCoroutine(controller, navMeshAgent, targetPosition, targetRotation, lookPosition));
+            return;
+        }
 
         if (!useTween)
         {
-            // Instant snap: disable CharacterController to avoid physics interference
-            if (characterController != null)
-            {
-                bool wasEnabled = characterController.enabled;
-                characterController.enabled = false;
-                controllerTransform.SetPositionAndRotation(targetPosition, targetRotation);
-                characterController.enabled = wasEnabled;
-            }
-            else
-            {
-                controllerTransform.SetPositionAndRotation(targetPosition, targetRotation);
-            }
+            // Instant snap: disable movement controllers to avoid physics interference
+            bool ccWasEnabled = characterController != null && characterController.enabled;
+
+            if (characterController != null) characterController.enabled = false;
+
+            controllerTransform.SetPositionAndRotation(targetPosition, targetRotation);
+
+            if (characterController != null) characterController.enabled = ccWasEnabled;
 
             if (!controller.enabled)
             {
@@ -205,22 +225,26 @@ public class DisplayWall : MonoBehaviour
         }
 
         // We need to move: disable CharacterController while tweening
-        bool restoreController = false;
+        bool restoreCharacterController = false;
         if (characterController != null && characterController.enabled)
         {
-            restoreController = true;
+            restoreCharacterController = true;
             characterController.enabled = false;
         }
 
+        // Compute yaw-only rotation for the tween (no pitch on the player)
+        Vector3 tweenLookDir = lookPosition - targetPosition;
+        tweenLookDir.y = 0f;
+        Quaternion tweenTargetRotation = tweenLookDir.sqrMagnitude > 0.0001f
+            ? Quaternion.LookRotation(tweenLookDir.normalized, Vector3.up)
+            : Quaternion.Euler(0f, controllerTransform.eulerAngles.y, 0f);
+
         currentTween = DOTween.Sequence()
             .Join(controllerTransform.DOMove(targetPosition, moveDuration).SetEase(moveEase))
-            .Join(controllerTransform.DORotateQuaternion(targetPosition == controllerTransform.position
-                ? controllerTransform.rotation
-                : Quaternion.LookRotation((lookPosition - targetPosition).normalized, Vector3.up),
-                moveDuration).SetEase(moveEase))
+            .Join(controllerTransform.DORotateQuaternion(tweenTargetRotation, moveDuration).SetEase(moveEase))
             .OnComplete(() =>
             {
-                if (restoreController && characterController != null)
+                if (restoreCharacterController && characterController != null)
                 {
                     characterController.enabled = true;
                 }
@@ -235,11 +259,57 @@ public class DisplayWall : MonoBehaviour
             })
             .OnKill(() =>
             {
-                if (restoreController && characterController != null)
+                if (restoreCharacterController && characterController != null)
                 {
                     characterController.enabled = true;
                 }
             });
+    }
+
+    /// <summary>
+    /// Coroutine that handles focus movement using NavMeshAgent pathfinding.
+    /// Waits for the agent to reach the destination, then rotates and adjusts camera.
+    /// </summary>
+    private System.Collections.IEnumerator NavMeshFocusCoroutine(
+        FirstPersonController controller,
+        NavMeshAgent navMeshAgent,
+        Vector3 targetPosition,
+        Quaternion targetRotation,
+        Vector3 lookPosition)
+    {
+        // Set destination for pathfinding
+        navMeshAgent.SetDestination(targetPosition);
+
+        // Wait until path is calculated
+        while (navMeshAgent.pathPending)
+        {
+            yield return null;
+        }
+
+        // Wait until agent reaches destination
+        while (navMeshAgent.remainingDistance > navMeshAgent.stoppingDistance + 0.1f)
+        {
+            yield return null;
+        }
+
+        // Stop the agent
+        navMeshAgent.ResetPath();
+
+        // Smoothly rotate to face the look position
+        var controllerTransform = controller.transform;
+        float rotationDuration = moveDuration * 0.5f;
+        
+        currentTween = controllerTransform.DORotateQuaternion(targetRotation, rotationDuration)
+            .SetEase(moveEase)
+            .OnComplete(() =>
+            {
+                // Adjust camera pitch to look at the artwork
+                float pitchDuration = Mathf.Max(0.05f, moveDuration * 0.35f);
+                controller.SmoothLookAt(lookPosition, pitchDuration, moveEase);
+                currentTween = null;
+            });
+
+        navMeshFocusCoroutine = null;
     }
 
     /// <summary>

@@ -10,9 +10,9 @@ public static class AppConfig
     /// - Staging: "https://stg.artiure.com"
     /// - Production: "https://artiure.com" (example)
     /// </summary>
-    //public const string BaseUrl = "https://stg.artiure.com";
+    public const string BaseUrl = "https://stg.artiure.com";
     //public const string BaseUrl = "https://artiure.com"; // PRODUCTION
-    public const string BaseUrl = "http://localhost:3000"; // LOCAL
+    //public const string BaseUrl = "http://localhost:3000"; // LOCAL
 
     // API endpoint paths (can be combined with BaseUrl)
     public const string CartEndpoint = "/api/user/cart";

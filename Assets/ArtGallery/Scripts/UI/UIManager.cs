@@ -27,12 +27,16 @@ public class UIManager : MonoBehaviour
     [Tooltip("Direct reference to FirstPersonController component (optional)")]
     [SerializeField] private FirstPersonController firstPersonController;
 
-    [Header("Display Wall Navigation")]
-    [Tooltip("If true, UIManager will automatically find all DisplayWall objects in the scene and sort them by displayWallId.")]
-    [SerializeField] private bool autoFindDisplayWalls = true;
+    [Header("Frame Navigation")]
+    [Tooltip("If true, UIManager will automatically find all ArtworkFrame objects in the scene.")]
+    [SerializeField] private bool autoFindFrames = true;
 
-    private List<DisplayWall> cachedDisplayWalls = new List<DisplayWall>();
-    private bool displayWallsCached = false;
+    [Header("Debug - Cached Frames (Read Only)")]
+    [Tooltip("List of all ArtworkFrames cached for navigation, sorted by DisplayWall ID -> Slot -> Frame name.")]
+    [SerializeField] private List<ArtworkFrame> cachedFrames = new List<ArtworkFrame>();
+    
+    [SerializeField] private int currentFrameIndex = -1;
+    [SerializeField] private bool framesCached = false;
     
     // Events
     public Action OnUIManagerInitialized;
@@ -96,11 +100,46 @@ public class UIManager : MonoBehaviour
             panelManager.OnPanelOpened += HandlePanelOpened;
             panelManager.OnPanelClosed += HandlePanelClosed;
         }
+
+        // Subscribe to ArtworkManagerNew events to auto-populate frame cache when API data loads
+        SubscribeToArtworkManagerEvents();
         
         if (logUIEvents)
             Debug.Log("UIManager: Initialized");
         
         OnUIManagerInitialized?.Invoke();
+    }
+
+    /// <summary>
+    /// Subscribes to ArtworkManagerNew events for automatic frame cache population.
+    /// </summary>
+    private void SubscribeToArtworkManagerEvents()
+    {
+        ArtworkManagerNew artworkManager = FindObjectOfType<ArtworkManagerNew>();
+        if (artworkManager != null)
+        {
+            artworkManager.OnAllImagesDownloaded += OnArtworkImagesLoaded;
+            if (logUIEvents)
+                Debug.Log("UIManager: Subscribed to ArtworkManagerNew.OnAllImagesDownloaded");
+        }
+        else
+        {
+            if (logUIEvents)
+                Debug.LogWarning("UIManager: ArtworkManagerNew not found in scene. Frame cache will not auto-populate.");
+        }
+    }
+
+    /// <summary>
+    /// Called when ArtworkManagerNew finishes downloading all images.
+    /// Refreshes the frame cache so navigation is ready.
+    /// </summary>
+    private void OnArtworkImagesLoaded()
+    {
+        if (logUIEvents)
+            Debug.Log("UIManager: API images loaded, refreshing frame cache...");
+        
+        RefreshFrameCache();
+        CacheFramesIfNeeded();
     }
     
     /// <summary>
@@ -390,145 +429,289 @@ public class UIManager : MonoBehaviour
         return GetFirstPersonController();
     }
 
-    #region Display Wall Navigation API
+    #region Frame Navigation API
 
     /// <summary>
-    /// Moves the player to the next DisplayWall (by displayWallId) relative to the current one.
+    /// Moves the player to focus on the next ArtworkFrame.
     /// Hook this up to a UI Button's OnClick event for "Next" navigation.
     /// </summary>
-    public void FocusNextDisplayWall()
+    public void FocusNextFrame()
     {
-        FocusRelativeDisplayWall(+1);
+        FocusRelativeFrame(+1);
     }
 
     /// <summary>
-    /// Moves the player to the previous DisplayWall (by displayWallId) relative to the current one.
+    /// Moves the player to focus on the previous ArtworkFrame.
     /// Hook this up to a UI Button's OnClick event for "Previous" navigation.
     /// </summary>
-    public void FocusPreviousDisplayWall()
+    public void FocusPreviousFrame()
     {
-        FocusRelativeDisplayWall(-1);
+        FocusRelativeFrame(-1);
     }
 
     /// <summary>
-    /// Finds all DisplayWall components in the scene and caches them sorted by displayWallId.
+    /// Legacy method names for backward compatibility with existing button bindings.
     /// </summary>
-    private void CacheDisplayWallsIfNeeded()
+    public void FocusNextDisplayWall() => FocusNextFrame();
+    public void FocusPreviousDisplayWall() => FocusPreviousFrame();
+
+    /// <summary>
+    /// Finds all ArtworkFrame components in the scene and caches them.
+    /// Frames are sorted by their parent DisplayWall's displayWallId first,
+    /// then by the frame's sibling index within each wall.
+    /// </summary>
+    private void CacheFramesIfNeeded()
     {
-        if (displayWallsCached)
+        if (framesCached)
             return;
 
-        cachedDisplayWalls.Clear();
+        cachedFrames.Clear();
 
-        if (autoFindDisplayWalls)
+        if (autoFindFrames)
         {
 #if UNITY_2023_1_OR_NEWER
-            var found = FindObjectsByType<DisplayWall>(FindObjectsSortMode.None);
+            var allFrames = FindObjectsByType<ArtworkFrame>(FindObjectsSortMode.None);
 #else
-            var found = FindObjectsOfType<DisplayWall>();
+            var allFrames = FindObjectsOfType<ArtworkFrame>();
 #endif
-            if (found != null)
+            if (allFrames != null)
             {
-                cachedDisplayWalls.AddRange(found);
+                cachedFrames.AddRange(allFrames);
             }
         }
 
-        // Sort by the configured displayWallId so navigation order is deterministic.
-        cachedDisplayWalls.Sort((a, b) => a.displayWallId.CompareTo(b.displayWallId));
-        displayWallsCached = true;
+        // Sort frames by: 1) DisplayWall ID, 2) Slot index, 3) Frame name within layout
+        cachedFrames.Sort((a, b) =>
+        {
+            DisplayWall wallA = GetParentDisplayWall(a);
+            DisplayWall wallB = GetParentDisplayWall(b);
+
+            // 1. Sort by DisplayWall ID (ascending)
+            int wallIdA = wallA != null ? wallA.displayWallId : int.MaxValue;
+            int wallIdB = wallB != null ? wallB.displayWallId : int.MaxValue;
+
+            if (wallIdA != wallIdB)
+                return wallIdA.CompareTo(wallIdB);
+
+            // 2. Sort by slot index (ascending) - get from parent FrameLayout
+            FrameLayout layoutA = GetParentFrameLayout(a);
+            FrameLayout layoutB = GetParentFrameLayout(b);
+
+            int slotA = layoutA != null ? layoutA.StartSlot : int.MaxValue;
+            int slotB = layoutB != null ? layoutB.StartSlot : int.MaxValue;
+
+            if (slotA != slotB)
+                return slotA.CompareTo(slotB);
+
+            // 3. Sort by frame name within the same layout (ascending)
+            return string.Compare(a.name, b.name, StringComparison.Ordinal);
+        });
+
+        framesCached = true;
+
+        if (logUIEvents)
+        {
+            Debug.Log($"UIManager: Cached {cachedFrames.Count} ArtworkFrame(s) for navigation.");
+            
+            // Log detailed sorting info for debugging
+            for (int i = 0; i < cachedFrames.Count; i++)
+            {
+                var frame = cachedFrames[i];
+                if (frame == null) continue;
+                
+                DisplayWall wall = GetParentDisplayWall(frame);
+                FrameLayout layout = GetParentFrameLayout(frame);
+                
+                int wallId = wall != null ? wall.displayWallId : -1;
+                int slot = layout != null ? layout.StartSlot : -1;
+                
+                Debug.Log($"  [{i}] Frame: '{frame.name}' | WallID: {wallId} | Slot: {slot}");
+            }
+        }
     }
 
     /// <summary>
-    /// Returns the DisplayWall that is currently "selected" based on the player's position.
-    /// Assumes the current wall is the one whose standing point is closest to the player.
+    /// Finds the DisplayWall that is a parent of the given frame.
     /// </summary>
-    private DisplayWall GetCurrentDisplayWall()
+    private DisplayWall GetParentDisplayWall(ArtworkFrame frame)
     {
-        CacheDisplayWallsIfNeeded();
+        if (frame == null)
+            return null;
 
-        if (cachedDisplayWalls == null || cachedDisplayWalls.Count == 0)
+        return frame.GetComponentInParent<DisplayWall>();
+    }
+
+    /// <summary>
+    /// Finds the FrameLayout that is a parent of the given frame.
+    /// </summary>
+    private FrameLayout GetParentFrameLayout(ArtworkFrame frame)
+    {
+        if (frame == null)
+            return null;
+
+        return frame.GetComponentInParent<FrameLayout>();
+    }
+
+    /// <summary>
+    /// Returns the ArtworkFrame that is currently closest to the player.
+    /// Updates currentFrameIndex as a side effect.
+    /// </summary>
+    private ArtworkFrame GetCurrentFrame()
+    {
+        CacheFramesIfNeeded();
+
+        if (cachedFrames == null || cachedFrames.Count == 0)
             return null;
 
         FirstPersonController controller = GetFirstPersonController();
         if (controller == null)
         {
-            // If we don't have a player reference, just return the first wall.
-            return cachedDisplayWalls[0];
+            currentFrameIndex = 0;
+            return cachedFrames[0];
         }
 
         Transform playerTransform = controller.transform;
         float bestDistSq = float.MaxValue;
-        DisplayWall bestWall = null;
+        ArtworkFrame bestFrame = null;
+        int bestIndex = 0;
 
-        foreach (var wall in cachedDisplayWalls)
+        for (int i = 0; i < cachedFrames.Count; i++)
         {
-            if (wall == null)
+            ArtworkFrame frame = cachedFrames[i];
+            if (frame == null)
                 continue;
 
-            Transform standPoint = wall.standingPoint != null ? wall.standingPoint : wall.transform;
-            float distSq = (standPoint.position - playerTransform.position).sqrMagnitude;
+            // Use the computed standing position for this frame
+            DisplayWall parentWall = GetParentDisplayWall(frame);
+            Vector3 standPos;
+            if (parentWall != null)
+            {
+                standPos = parentWall.ComputeStandingPositionForFrame(frame);
+            }
+            else
+            {
+                standPos = frame.transform.position;
+            }
+
+            float distSq = (standPos - playerTransform.position).sqrMagnitude;
 
             if (distSq < bestDistSq)
             {
                 bestDistSq = distSq;
-                bestWall = wall;
+                bestFrame = frame;
+                bestIndex = i;
             }
         }
 
-        return bestWall ?? cachedDisplayWalls[0];
+        currentFrameIndex = bestIndex;
+        return bestFrame ?? cachedFrames[0];
     }
 
     /// <summary>
-    /// Shared helper that moves to the next/previous DisplayWall in the cached list.
+    /// Shared helper that moves to the next/previous ArtworkFrame in the cached list.
     /// </summary>
-    private void FocusRelativeDisplayWall(int direction)
+    private void FocusRelativeFrame(int direction)
     {
-        CacheDisplayWallsIfNeeded();
+        CacheFramesIfNeeded();
 
-        if (cachedDisplayWalls == null || cachedDisplayWalls.Count == 0)
+        if (cachedFrames == null || cachedFrames.Count == 0)
         {
-            Debug.LogWarning("UIManager: No DisplayWall objects found in the scene for navigation.");
+            Debug.LogWarning("UIManager: No ArtworkFrame objects found in the scene for navigation.");
             return;
         }
 
-        DisplayWall current = GetCurrentDisplayWall();
-        if (current == null)
+        // Only determine current frame from player position on FIRST navigation
+        // After that, we track the index explicitly to avoid issues with player still moving
+        if (currentFrameIndex < 0 || currentFrameIndex >= cachedFrames.Count)
         {
-            Debug.LogWarning("UIManager: Could not determine current DisplayWall; falling back to first in list.");
-            current = cachedDisplayWalls[0];
+            GetCurrentFrame();
         }
 
-        int currentIndex = cachedDisplayWalls.IndexOf(current);
-        if (currentIndex < 0)
+        // Fallback if still invalid
+        if (currentFrameIndex < 0 || currentFrameIndex >= cachedFrames.Count)
         {
-            // If current wall isn't in the list for some reason, default to first.
-            currentIndex = 0;
+            currentFrameIndex = 0;
         }
 
-        int targetIndex = currentIndex + direction;
+        int targetIndex = currentFrameIndex + direction;
 
+        // Wrap around
         if (targetIndex < 0)
         {
-            targetIndex = cachedDisplayWalls.Count - 1; // wrap to last
+            targetIndex = cachedFrames.Count - 1;
         }
-        else if (targetIndex >= cachedDisplayWalls.Count)
+        else if (targetIndex >= cachedFrames.Count)
         {
-            targetIndex = 0; // wrap to first
+            targetIndex = 0;
         }
 
-        DisplayWall targetWall = cachedDisplayWalls[targetIndex];
-        if (targetWall == null)
+        ArtworkFrame targetFrame = cachedFrames[targetIndex];
+        if (targetFrame == null)
         {
-            Debug.LogWarning("UIManager: Target DisplayWall for navigation is null.");
+            Debug.LogWarning("UIManager: Target ArtworkFrame for navigation is null.");
             return;
         }
+
+        // Find the parent DisplayWall to use its focus method
+        DisplayWall parentWall = GetParentDisplayWall(targetFrame);
+        if (parentWall == null)
+        {
+            Debug.LogWarning($"UIManager: ArtworkFrame '{targetFrame.name}' has no parent DisplayWall.");
+            return;
+        }
+
+        currentFrameIndex = targetIndex;
 
         if (logUIEvents)
         {
-            Debug.Log($"UIManager: Focusing DisplayWall ID {targetWall.displayWallId} (index {targetIndex}).");
+            Debug.Log($"UIManager: Focusing ArtworkFrame '{targetFrame.name}' (index {targetIndex}) on DisplayWall ID {parentWall.displayWallId}.");
         }
 
-        targetWall.FocusPlayer();
+        parentWall.FocusPlayerOnFrame(targetFrame);
+    }
+
+    /// <summary>
+    /// Clears the cached frames list, forcing a refresh on next navigation.
+    /// Call this if frames are dynamically added/removed at runtime.
+    /// </summary>
+    public void RefreshFrameCache()
+    {
+        framesCached = false;
+        cachedFrames.Clear();
+        currentFrameIndex = -1;
+    }
+
+    /// <summary>
+    /// Gets the total number of cached frames available for navigation.
+    /// </summary>
+    public int GetFrameCount()
+    {
+        CacheFramesIfNeeded();
+        return cachedFrames.Count;
+    }
+
+    /// <summary>
+    /// Gets the current frame index (0-based). Returns -1 if not yet determined.
+    /// </summary>
+    public int GetCurrentFrameIndex()
+    {
+        return currentFrameIndex;
+    }
+
+    /// <summary>
+    /// Recalculates the current frame index based on player position.
+    /// Call this if the player manually walks to a different area and you want
+    /// navigation to resume from their new position.
+    /// </summary>
+    public void RecalculateCurrentFrameFromPosition()
+    {
+        currentFrameIndex = -1;
+        GetCurrentFrame();
+        
+        if (logUIEvents)
+        {
+            Debug.Log($"UIManager: Recalculated current frame index to {currentFrameIndex}");
+        }
     }
 
     #endregion
@@ -540,6 +723,13 @@ public class UIManager : MonoBehaviour
         {
             panelManager.OnPanelOpened -= HandlePanelOpened;
             panelManager.OnPanelClosed -= HandlePanelClosed;
+        }
+
+        // Unsubscribe from ArtworkManagerNew events
+        ArtworkManagerNew artworkManager = FindObjectOfType<ArtworkManagerNew>();
+        if (artworkManager != null)
+        {
+            artworkManager.OnAllImagesDownloaded -= OnArtworkImagesLoaded;
         }
     }
 }

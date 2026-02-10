@@ -342,9 +342,7 @@ public class InformationScreenUiManager : MonoBehaviour
             else if (WebGLMediaCache.TryGetTexture(imageUrl, out var tex))
             {
                 // Create a sprite view onto the cached texture.
-                // Note: textures coming from ArtworkManagerNew have already been flipped
-                // vertically to render correctly on 3D quads. To show them upright in the
-                // UI Image, we create the sprite with a vertically inverted rect.
+                // Texture was flipped for 3D quads, use inverted rect to show upright in UI.
                 var rect = new Rect(0, tex.height, tex.width, -tex.height);
                 var pivot = new Vector2(0.5f, 0.5f);
                 mainImage.sprite = Sprite.Create(tex, rect, pivot);

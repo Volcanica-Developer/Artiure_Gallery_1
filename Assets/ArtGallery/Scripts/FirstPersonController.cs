@@ -1,4 +1,5 @@
 using UnityEngine;
+using UnityEngine.AI;
 using UnityEngine.EventSystems;
 #if ENABLE_INPUT_SYSTEM
 using UnityEngine.InputSystem;
@@ -8,20 +9,32 @@ using DG.Tweening;
 /// <summary>
 /// First-person camera controller with keyboard/mouse and touch support.
 /// Optimized for WebGL and desktop builds.
+/// Supports both CharacterController and NavMeshAgent for movement.
 /// </summary>
-[RequireComponent(typeof(CharacterController))]
 public class FirstPersonController : MonoBehaviour
 {
     [Header("Movement Settings")]
     [SerializeField] private float walkSpeed = 5f;
     [SerializeField] private float runSpeed = 8f;
     [SerializeField] private float gravity = -9.81f;
+
+    [Header("NavMesh Settings")]
+    [Tooltip("When enabled, uses NavMeshAgent for movement instead of CharacterController.")]
+    [SerializeField] private bool useNavMeshAgent = false;
+    [Tooltip("Stopping distance for NavMeshAgent when using click-to-move or input movement.")]
+    [SerializeField] private float navMeshStoppingDistance = 0.1f;
+    [Tooltip("When enabled, prevents NavMeshAgent from changing the player's Y position (height).")]
+    [SerializeField] private bool lockNavMeshYPosition = true;
     
     [Header("Mouse Look Settings")]
     [SerializeField] private float mouseSensitivity = 2f;
     [SerializeField] private float verticalLookLimit = 80f;
     [SerializeField] private bool invertY = false;
     [SerializeField] private bool invertRotation = false;
+
+    [Header("Vertical Camera Rotation (Camera rotates instead of player)")]
+    [Tooltip("When enabled, vertical drag rotates the camera's pitch. Horizontal drag still rotates the player.")]
+    [SerializeField] private bool useVerticalCameraRotation = true;
 
     [Header("Touch Look Settings")]
     [SerializeField] private float touchSensitivity = 0.5f;
@@ -63,6 +76,7 @@ public class FirstPersonController : MonoBehaviour
     [SerializeField] private bool debugClickToMoveLayers = false;
     
     private CharacterController characterController;
+    private NavMeshAgent navMeshAgent;
     private Camera playerCamera;
     private Vector3 velocity;
     private float verticalRotation = 0f;
@@ -113,11 +127,32 @@ public class FirstPersonController : MonoBehaviour
     private void Awake()
     {
         characterController = GetComponent<CharacterController>();
+        navMeshAgent = GetComponent<NavMeshAgent>();
         playerCamera = GetComponentInChildren<Camera>();
         
         if (playerCamera == null)
         {
             playerCamera = Camera.main;
+        }
+
+        // Configure based on movement mode
+        if (useNavMeshAgent && navMeshAgent != null)
+        {
+            navMeshAgent.updateRotation = false; // We handle rotation manually
+            navMeshAgent.updatePosition = false; // We handle position manually to control Y
+            navMeshAgent.stoppingDistance = navMeshStoppingDistance;
+            if (characterController != null)
+            {
+                characterController.enabled = false; // Disable CharacterController when using NavMesh
+            }
+        }
+        else if (characterController != null)
+        {
+            useNavMeshAgent = false; // Fallback to CharacterController if no NavMeshAgent
+            if (navMeshAgent != null)
+            {
+                navMeshAgent.enabled = false;
+            }
         }
         
         // Keep cursor visible and unlocked for click-and-drag interaction
@@ -217,6 +252,18 @@ public class FirstPersonController : MonoBehaviour
     
     private void HandleMovement()
     {
+        if (useNavMeshAgent)
+        {
+            HandleNavMeshMovement();
+        }
+        else
+        {
+            HandleCharacterControllerMovement();
+        }
+    }
+
+    private void HandleCharacterControllerMovement()
+    {
         // If the CharacterController is disabled (e.g. while tweening to a wall stand point), skip movement.
         if (characterController == null || !characterController.enabled)
             return;
@@ -273,6 +320,57 @@ public class FirstPersonController : MonoBehaviour
         velocity.y += gravity * Time.deltaTime;
         characterController.Move(velocity * Time.deltaTime);
     }
+
+    private void HandleNavMeshMovement()
+    {
+        // If the NavMeshAgent is disabled (e.g. while tweening to a wall stand point), skip movement.
+        if (navMeshAgent == null || !navMeshAgent.enabled)
+            return;
+
+        // Store original Y position to preserve height
+        float originalY = transform.position.y;
+
+        // If player starts providing manual movement input, cancel click-to-move
+        bool hasManualInput = moveInput.sqrMagnitude > 0.0001f;
+        if (isClickMoving && hasManualInput)
+        {
+            isClickMoving = false;
+            navMeshAgent.ResetPath();
+        }
+
+        // Check if NavMeshAgent has reached its destination for click-to-move
+        if (isClickMoving)
+        {
+            if (!navMeshAgent.pathPending && navMeshAgent.remainingDistance <= navMeshAgent.stoppingDistance)
+            {
+                isClickMoving = false;
+            }
+        }
+
+        // Manual input movement (WASD / joystick)
+        if (!isClickMoving && hasManualInput)
+        {
+            // Calculate movement direction (using smoothed input for easing)
+            Vector3 moveDirection = transform.right * smoothedMoveInput.x + transform.forward * smoothedMoveInput.y;
+            float currentSpeed = isRunning ? runSpeed : walkSpeed;
+            
+            // Use NavMeshAgent.Move for direct velocity-based movement
+            navMeshAgent.Move(moveDirection * currentSpeed * Time.deltaTime);
+        }
+
+        // Manually sync transform position from NavMeshAgent (since updatePosition is false)
+        // Use NavMeshAgent's X/Z but keep our original Y
+        Vector3 agentPos = navMeshAgent.nextPosition;
+        if (lockNavMeshYPosition)
+        {
+            transform.position = new Vector3(agentPos.x, originalY, agentPos.z);
+        }
+        else
+        {
+            transform.position = agentPos;
+        }
+    }
+
     
     private void HandleMouseDragInput()
     {
@@ -376,14 +474,21 @@ public class FirstPersonController : MonoBehaviour
     {
         if (smoothedLookInput.sqrMagnitude < 0.0001f) return;
         
-        // Horizontal rotation (Y-axis)
+        // Horizontal rotation (Y-axis) - always rotate the player
         transform.Rotate(Vector3.up * smoothedLookInput.x * mouseSensitivity * (invertRotation ? 1f : -1f));
         
-        // Vertical rotation (X-axis) - clamped
-        float yRotation = smoothedLookInput.y * mouseSensitivity * (invertY ? 1f : -1f);
-        verticalRotation += yRotation;
-        verticalRotation = Mathf.Clamp(verticalRotation, -verticalLookLimit, verticalLookLimit);
-        playerCamera.transform.localRotation = Quaternion.Euler(verticalRotation, 0f, 0f);
+        // Vertical rotation (X-axis) - camera pitch, clamped
+        if (useVerticalCameraRotation)
+        {
+            // Ensure player only rotates on Y axis (no tilt/roll)
+            Vector3 playerEuler = transform.eulerAngles;
+            transform.rotation = Quaternion.Euler(0f, playerEuler.y, 0f);
+            
+            float yRotation = smoothedLookInput.y * mouseSensitivity * (invertY ? 1f : -1f);
+            verticalRotation += yRotation;
+            verticalRotation = Mathf.Clamp(verticalRotation, -verticalLookLimit, verticalLookLimit);
+            playerCamera.transform.localRotation = Quaternion.Euler(verticalRotation, 0f, 0f);
+        }
     }
     
     private void HandleTouchInput()
@@ -767,6 +872,12 @@ public class FirstPersonController : MonoBehaviour
 
                         clickMoveTargetPosition = target;
                         isClickMoving = true;
+
+                        // Use NavMeshAgent.SetDestination for pathfinding
+                        if (useNavMeshAgent && navMeshAgent != null && navMeshAgent.enabled)
+                        {
+                            navMeshAgent.SetDestination(target);
+                        }
                         return;
                     }
                 }
@@ -849,6 +960,12 @@ public class FirstPersonController : MonoBehaviour
 
                                 clickMoveTargetPosition = target;
                                 isClickMoving = true;
+
+                                // Use NavMeshAgent.SetDestination for pathfinding
+                                if (useNavMeshAgent && navMeshAgent != null && navMeshAgent.enabled)
+                                {
+                                    navMeshAgent.SetDestination(target);
+                                }
                                 break;
                             }
                         }
@@ -924,12 +1041,21 @@ public class FirstPersonController : MonoBehaviour
     public float RunSpeed { get => runSpeed; set => runSpeed = value; }
     public float GravityValue { get => gravity; set => gravity = value; }
 
+    // NavMesh
+    public bool UseNavMeshAgent { get => useNavMeshAgent; }
+    public NavMeshAgent NavMeshAgent { get => navMeshAgent; }
+    public float NavMeshStoppingDistance { get => navMeshStoppingDistance; set { navMeshStoppingDistance = value; if (navMeshAgent != null) navMeshAgent.stoppingDistance = value; } }
+    public bool LockNavMeshYPosition { get => lockNavMeshYPosition; set => lockNavMeshYPosition = value; }
+
     // Mouse / touch look
     public float MouseSensitivity { get => mouseSensitivity; set => mouseSensitivity = value; }
     public float VerticalLookLimit { get => verticalLookLimit; set => verticalLookLimit = value; }
     public bool InvertY { get => invertY; set => invertY = value; }
     public bool InvertRotation { get => invertRotation; set => invertRotation = value; }
     public float TouchSensitivity { get => touchSensitivity; set => touchSensitivity = value; }
+
+    // Vertical camera rotation
+    public bool UseVerticalCameraRotation { get => useVerticalCameraRotation; set => useVerticalCameraRotation = value; }
 
     // Game controls / mobile
     public bool EnableGameControls { get => enableGameControls; set => enableGameControls = value; }
@@ -976,11 +1102,19 @@ public class FirstPersonController : MonoBehaviour
 
         // Also stop click-to-move if it happened to be active
         isClickMoving = false;
+
+        // Stop NavMeshAgent movement if using NavMesh
+        if (useNavMeshAgent && navMeshAgent != null && navMeshAgent.enabled)
+        {
+            navMeshAgent.ResetPath();
+            navMeshAgent.velocity = Vector3.zero;
+        }
     }
 
     /// <summary>
     /// Instantly orients the player + camera so the camera looks directly at a world-space point.
     /// Used after focusing a DisplayWall so the painting center is exactly in view.
+    /// When useVerticalCameraRotation is enabled, rotates the camera to look at the target.
     /// </summary>
     public void SnapLookAt(Vector3 worldPoint)
     {
@@ -992,21 +1126,25 @@ public class FirstPersonController : MonoBehaviour
         if (toTarget.sqrMagnitude < 0.0001f)
             return;
 
-        // Full look rotation from camera to target
-        Quaternion lookRot = Quaternion.LookRotation(toTarget.normalized, Vector3.up);
-        Vector3 euler = lookRot.eulerAngles;
+        if (useVerticalCameraRotation)
+        {
+            // Full look rotation from camera to target
+            Quaternion lookRot = Quaternion.LookRotation(toTarget.normalized, Vector3.up);
+            Vector3 euler = lookRot.eulerAngles;
 
-        // Convert to signed pitch (-180..180) for clamping. We let yaw be handled elsewhere (e.g. DisplayWall tween).
-        float pitch = euler.x > 180f ? euler.x - 360f : euler.x;
+            // Convert to signed pitch (-180..180) for clamping. We let yaw be handled elsewhere (e.g. DisplayWall tween).
+            float pitch = euler.x > 180f ? euler.x - 360f : euler.x;
 
-        // Apply pitch to camera (X axis), respecting vertical clamp
-        verticalRotation = Mathf.Clamp(pitch, -verticalLookLimit, verticalLookLimit);
-        playerCamera.transform.localRotation = Quaternion.Euler(verticalRotation, 0f, 0f);
+            // Apply pitch to camera (X axis), respecting vertical clamp
+            verticalRotation = Mathf.Clamp(pitch, -verticalLookLimit, verticalLookLimit);
+            playerCamera.transform.localRotation = Quaternion.Euler(verticalRotation, 0f, 0f);
+        }
     }
 
     /// <summary>
     /// Smoothly adjusts the camera pitch so it looks at a world-space point over a short duration.
     /// Used after a focus tween so the final adjustment is not a hard snap.
+    /// When useVerticalCameraRotation is enabled, smoothly rotates camera pitch to look at target.
     /// </summary>
     public void SmoothLookAt(Vector3 worldPoint, float duration, Ease ease)
     {
@@ -1018,33 +1156,36 @@ public class FirstPersonController : MonoBehaviour
         if (toTarget.sqrMagnitude < 0.0001f)
             return;
 
-        // Desired look rotation from camera to target
-        Quaternion lookRot = Quaternion.LookRotation(toTarget.normalized, Vector3.up);
-        Vector3 euler = lookRot.eulerAngles;
-
-        // Target pitch in signed form (-180..180), then clamped to verticalLookLimit
-        float rawPitch = euler.x > 180f ? euler.x - 360f : euler.x;
-        float targetPitch = Mathf.Clamp(rawPitch, -verticalLookLimit, verticalLookLimit);
-
         // Kill any previous pitch tween so we don't stack tweens
         if (lookPitchTween != null && lookPitchTween.IsActive())
         {
             lookPitchTween.Kill();
         }
 
-        float startPitch = verticalRotation;
+        if (useVerticalCameraRotation)
+        {
+            // Desired look rotation from camera to target
+            Quaternion lookRot = Quaternion.LookRotation(toTarget.normalized, Vector3.up);
+            Vector3 euler = lookRot.eulerAngles;
 
-        lookPitchTween = DOTween.To(
-                () => startPitch,
-                v =>
-                {
-                    startPitch = v;
-                    verticalRotation = startPitch;
-                    playerCamera.transform.localRotation = Quaternion.Euler(verticalRotation, 0f, 0f);
-                },
-                targetPitch,
-                duration)
-            .SetEase(ease);
+            // Target pitch in signed form (-180..180), then clamped to verticalLookLimit
+            float rawPitch = euler.x > 180f ? euler.x - 360f : euler.x;
+            float targetPitch = Mathf.Clamp(rawPitch, -verticalLookLimit, verticalLookLimit);
+
+            float startPitch = verticalRotation;
+
+            lookPitchTween = DOTween.To(
+                    () => startPitch,
+                    v =>
+                    {
+                        startPitch = v;
+                        verticalRotation = startPitch;
+                        playerCamera.transform.localRotation = Quaternion.Euler(verticalRotation, 0f, 0f);
+                    },
+                    targetPitch,
+                    duration)
+                .SetEase(ease);
+        }
     }
 
     #endregion

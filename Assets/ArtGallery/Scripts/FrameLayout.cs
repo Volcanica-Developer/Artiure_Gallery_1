@@ -23,6 +23,9 @@ public class FrameLayout : MonoBehaviour
     [Tooltip("Numeric layout identifier (e.g. 1, 2, 3). This will be matched to the numeric part of the JSON layoutId (e.g. 'layout_1').")]
     [SerializeField] private int layoutId;
 
+    [Tooltip("The slot index this layout was placed at (set at runtime by ArtworkManagerNew).")]
+    [SerializeField] private int startSlot = -1;
+
     [Header("Frames in this Layout")]
     [Tooltip("All ArtworkFrame components that belong to this layout, sorted by GameObject name.")]
     [SerializeField] private List<ArtworkFrame> frames = new List<ArtworkFrame>();
@@ -34,6 +37,16 @@ public class FrameLayout : MonoBehaviour
     {
         get => layoutId;
         set => layoutId = value;
+    }
+
+    /// <summary>
+    /// The slot index this layout was placed at on its parent DisplayWall.
+    /// Set at runtime when the layout is instantiated. Returns -1 if not set.
+    /// </summary>
+    public int StartSlot
+    {
+        get => startSlot;
+        set => startSlot = value;
     }
 
     /// <summary>

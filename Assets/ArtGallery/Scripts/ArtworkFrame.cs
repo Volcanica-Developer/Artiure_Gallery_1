@@ -21,9 +21,9 @@ public class ArtworkFrame : MonoBehaviour, IPointerEnterHandler, IPointerExitHan
     [Tooltip("The GameObject containing the SpriteRenderer for displaying artwork. Its transform will be scaled to match artworkPlane.")]
     [SerializeField] private GameObject spriteRendererObject;
     [Tooltip("Flip the sprite horizontally to correct orientation.")]
-    [SerializeField] private bool flipSpriteX = false;
+    [SerializeField] private bool flipSpriteX = true;
     [Tooltip("Flip the sprite vertically to correct orientation.")]
-    [SerializeField] private bool flipSpriteY = true;
+    [SerializeField] private bool flipSpriteY = false;
     
     [Header("Frame Pieces (Optional - for separate top/right/left/bottom)")]
     [SerializeField] private bool useFramePieces = false;
@@ -292,6 +292,19 @@ public class ArtworkFrame : MonoBehaviour, IPointerEnterHandler, IPointerExitHan
     }
 
     /// <summary>
+    /// Sets the horizontal flip state for the sprite renderer.
+    /// Call this when using rotated layout mode to correct sprite orientation.
+    /// </summary>
+    public void SetSpriteFlipX(bool flip)
+    {
+        flipSpriteX = flip;
+        if (spriteRendererComponent != null)
+        {
+            spriteRendererComponent.flipX = flipSpriteX;
+        }
+    }
+
+    /// <summary>
     /// Clears any texture from the artwork plane (used when there are more frames than paintings).
     /// </summary>
     public void ClearTexture()
@@ -422,7 +435,7 @@ public class ArtworkFrame : MonoBehaviour, IPointerEnterHandler, IPointerExitHan
         float scaleX = artworkScale2.x / Mathf.Max(0.0001f, spriteWidthUnits);
         float scaleY = artworkScale2.y / Mathf.Max(0.0001f, spriteHeightUnits);
 
-        spriteRendererObject.transform.localScale = new Vector3(scaleX, scaleY, 1f);
+        spriteRendererObject.transform.localScale = new Vector3(-scaleX, scaleY, 1f);
     }
     
     /// <summary>
