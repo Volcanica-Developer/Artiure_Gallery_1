@@ -631,7 +631,7 @@ Transform:
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
   m_LocalPosition: {x: 1.276, y: -0.4250002, z: 0.097299576}
-  m_LocalScale: {x: 1, y: 1, z: 0.2}
+  m_LocalScale: {x: 1, y: -1, z: 0.2}
   m_ConstrainProportionsScale: 0
   m_Children:
   - {fileID: 8726307974187828660}
@@ -683,6 +683,8 @@ MonoBehaviour:
   artworkMaterial: {fileID: 2100000, guid: 74264dfe83b5dda4fa61619e53f3b1a9, type: 2}
   useSpriteRenderer: 1
   spriteRendererObject: {fileID: 5872414073204352550}
+  flipSpriteX: 1
+  flipSpriteY: 0
   useFramePieces: 1
   frameTop: {fileID: 8926276846920836370}
   frameRight: {fileID: 3381931867762188143}
@@ -690,10 +692,12 @@ MonoBehaviour:
   frameBottom: {fileID: 1560915506517318308}
   artworkData: {fileID: 11400000, guid: 471d0462e4efcd047964fcf60e04f1e6, type: 2}
   debugPaintingData:
+    _id: 
     image_number: 0
     name: 
     shortDescription: 
     description: 
+    careInstruction: 
     slug: 
     uuid: 
     ratio: 
@@ -704,18 +708,40 @@ MonoBehaviour:
     regions: []
     status: 
     style: []
+    additional: []
+    sustainability: []
     colors: []
     medium: 
+    idealFor: []
+    matureContent: 0
+    isAiGenerated: 0
+    freeShipping: 0
+    disclaimer: 
+    isBestSeller: 0
+    isFeatured: 0
+    isLimitedEdition: 0
+    isExclusive: 0
     baseSKU: 
     price: []
+    maintainStock: 0
+    stock: 0
     images: []
     frames: []
+    metadata: []
+    tier: 
+    clicks: []
+    createdAt: 
+    updatedAt: 
+    __v: 0
     mainImage:
       image_id: 
       src: 
       alt: 
       key: 
       _id: 
+    matchedId: 
+    slotIndex: 0
+    i: 0
     sold: 0
     favourite: 0
     cart: 0
@@ -1644,6 +1670,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::FrameLayout
   layoutId: 29
+  startSlot: -1
   frames: []
 --- !u!1 &1805747203629632042
 GameObject:
@@ -1895,7 +1922,7 @@ Transform:
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
   m_LocalPosition: {x: -1.276, y: -0.4250002, z: 0.097299576}
-  m_LocalScale: {x: 1, y: 1, z: 0.2}
+  m_LocalScale: {x: 1, y: -1, z: 0.2}
   m_ConstrainProportionsScale: 0
   m_Children:
   - {fileID: 8285474519009557469}
@@ -1947,6 +1974,8 @@ MonoBehaviour:
   artworkMaterial: {fileID: 2100000, guid: 74264dfe83b5dda4fa61619e53f3b1a9, type: 2}
   useSpriteRenderer: 1
   spriteRendererObject: {fileID: 0}
+  flipSpriteX: 1
+  flipSpriteY: 0
   useFramePieces: 1
   frameTop: {fileID: 4941394877845222506}
   frameRight: {fileID: 1162665334197660256}
@@ -1954,10 +1983,12 @@ MonoBehaviour:
   frameBottom: {fileID: 4372600449810303924}
   artworkData: {fileID: 11400000, guid: 471d0462e4efcd047964fcf60e04f1e6, type: 2}
   debugPaintingData:
+    _id: 
     image_number: 0
     name: 
     shortDescription: 
     description: 
+    careInstruction: 
     slug: 
     uuid: 
     ratio: 
@@ -1968,18 +1999,40 @@ MonoBehaviour:
     regions: []
     status: 
     style: []
+    additional: []
+    sustainability: []
     colors: []
     medium: 
+    idealFor: []
+    matureContent: 0
+    isAiGenerated: 0
+    freeShipping: 0
+    disclaimer: 
+    isBestSeller: 0
+    isFeatured: 0
+    isLimitedEdition: 0
+    isExclusive: 0
     baseSKU: 
     price: []
+    maintainStock: 0
+    stock: 0
     images: []
     frames: []
+    metadata: []
+    tier: 
+    clicks: []
+    createdAt: 
+    updatedAt: 
+    __v: 0
     mainImage:
       image_id: 
       src: 
       alt: 
       key: 
       _id: 
+    matchedId: 
+    slotIndex: 0
+    i: 0
     sold: 0
     favourite: 0
     cart: 0
@@ -2025,7 +2078,7 @@ Transform:
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
   m_LocalPosition: {x: 0, y: -0.00000023841858, z: 0.097299576}
-  m_LocalScale: {x: 1, y: 1, z: 0.2}
+  m_LocalScale: {x: 1, y: -1, z: 0.2}
   m_ConstrainProportionsScale: 0
   m_Children:
   - {fileID: 6982076390412337427}
@@ -2077,6 +2130,8 @@ MonoBehaviour:
   artworkMaterial: {fileID: 2100000, guid: 74264dfe83b5dda4fa61619e53f3b1a9, type: 2}
   useSpriteRenderer: 1
   spriteRendererObject: {fileID: 1447425023760355082}
+  flipSpriteX: 1
+  flipSpriteY: 0
   useFramePieces: 1
   frameTop: {fileID: 3431679984768534065}
   frameRight: {fileID: 6930721099689054976}
@@ -2084,10 +2139,12 @@ MonoBehaviour:
   frameBottom: {fileID: 3730496340805140297}
   artworkData: {fileID: 11400000, guid: 471d0462e4efcd047964fcf60e04f1e6, type: 2}
   debugPaintingData:
+    _id: 
     image_number: 0
     name: 
     shortDescription: 
     description: 
+    careInstruction: 
     slug: 
     uuid: 
     ratio: 
@@ -2098,18 +2155,40 @@ MonoBehaviour:
     regions: []
     status: 
     style: []
+    additional: []
+    sustainability: []
     colors: []
     medium: 
+    idealFor: []
+    matureContent: 0
+    isAiGenerated: 0
+    freeShipping: 0
+    disclaimer: 
+    isBestSeller: 0
+    isFeatured: 0
+    isLimitedEdition: 0
+    isExclusive: 0
     baseSKU: 
     price: []
+    maintainStock: 0
+    stock: 0
     images: []
     frames: []
+    metadata: []
+    tier: 
+    clicks: []
+    createdAt: 
+    updatedAt: 
+    __v: 0
     mainImage:
       image_id: 
       src: 
       alt: 
       key: 
       _id: 
+    matchedId: 
+    slotIndex: 0
+    i: 0
     sold: 0
     favourite: 0
     cart: 0
@@ -2155,7 +2234,7 @@ Transform:
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
   m_LocalPosition: {x: 1.276, y: 0.42499995, z: 0.097299576}
-  m_LocalScale: {x: 1, y: 1, z: 0.2}
+  m_LocalScale: {x: 1, y: -1, z: 0.2}
   m_ConstrainProportionsScale: 0
   m_Children:
   - {fileID: 3769888121330004847}
@@ -2207,6 +2286,8 @@ MonoBehaviour:
   artworkMaterial: {fileID: 2100000, guid: 74264dfe83b5dda4fa61619e53f3b1a9, type: 2}
   useSpriteRenderer: 1
   spriteRendererObject: {fileID: 1663514280402473124}
+  flipSpriteX: 1
+  flipSpriteY: 0
   useFramePieces: 1
   frameTop: {fileID: 1809925443428108496}
   frameRight: {fileID: 262552225443760228}
@@ -2214,10 +2295,12 @@ MonoBehaviour:
   frameBottom: {fileID: 7715350167325377955}
   artworkData: {fileID: 11400000, guid: 471d0462e4efcd047964fcf60e04f1e6, type: 2}
   debugPaintingData:
+    _id: 
     image_number: 0
     name: 
     shortDescription: 
     description: 
+    careInstruction: 
     slug: 
     uuid: 
     ratio: 
@@ -2228,18 +2311,40 @@ MonoBehaviour:
     regions: []
     status: 
     style: []
+    additional: []
+    sustainability: []
     colors: []
     medium: 
+    idealFor: []
+    matureContent: 0
+    isAiGenerated: 0
+    freeShipping: 0
+    disclaimer: 
+    isBestSeller: 0
+    isFeatured: 0
+    isLimitedEdition: 0
+    isExclusive: 0
     baseSKU: 
     price: []
+    maintainStock: 0
+    stock: 0
     images: []
     frames: []
+    metadata: []
+    tier: 
+    clicks: []
+    createdAt: 
+    updatedAt: 
+    __v: 0
     mainImage:
       image_id: 
       src: 
       alt: 
       key: 
       _id: 
+    matchedId: 
+    slotIndex: 0
+    i: 0
     sold: 0
     favourite: 0
     cart: 0
@@ -2285,7 +2390,7 @@ Transform:
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
   m_LocalPosition: {x: -1.276, y: 0.42499995, z: 0.097299576}
-  m_LocalScale: {x: 1, y: 1, z: 0.2}
+  m_LocalScale: {x: 1, y: -1, z: 0.2}
   m_ConstrainProportionsScale: 0
   m_Children:
   - {fileID: 1244919224690189539}
@@ -2337,6 +2442,8 @@ MonoBehaviour:
   artworkMaterial: {fileID: 2100000, guid: 74264dfe83b5dda4fa61619e53f3b1a9, type: 2}
   useSpriteRenderer: 1
   spriteRendererObject: {fileID: 8745595069056683947}
+  flipSpriteX: 1
+  flipSpriteY: 0
   useFramePieces: 1
   frameTop: {fileID: 3579057490598805889}
   frameRight: {fileID: 3579826318933620437}
@@ -2344,10 +2451,12 @@ MonoBehaviour:
   frameBottom: {fileID: 6562947901075833742}
   artworkData: {fileID: 11400000, guid: 471d0462e4efcd047964fcf60e04f1e6, type: 2}
   debugPaintingData:
+    _id: 
     image_number: 0
     name: 
     shortDescription: 
     description: 
+    careInstruction: 
     slug: 
     uuid: 
     ratio: 
@@ -2358,18 +2467,40 @@ MonoBehaviour:
     regions: []
     status: 
     style: []
+    additional: []
+    sustainability: []
     colors: []
     medium: 
+    idealFor: []
+    matureContent: 0
+    isAiGenerated: 0
+    freeShipping: 0
+    disclaimer: 
+    isBestSeller: 0
+    isFeatured: 0
+    isLimitedEdition: 0
+    isExclusive: 0
     baseSKU: 
     price: []
+    maintainStock: 0
+    stock: 0
     images: []
     frames: []
+    metadata: []
+    tier: 
+    clicks: []
+    createdAt: 
+    updatedAt: 
+    __v: 0
     mainImage:
       image_id: 
       src: 
       alt: 
       key: 
       _id: 
+    matchedId: 
+    slotIndex: 0
+    i: 0
     sold: 0
     favourite: 0
     cart: 0

@@ -8,6 +8,8 @@ using UnityEngine.Video;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using TMPro;
+using System.Runtime.CompilerServices;
+using Unity.VisualScripting;
 
 /// <summary>
 /// ArtworkManagerNew is responsible for loading and exposing the new exhibition-based
@@ -34,8 +36,13 @@ public class ArtworkManagerNew : MonoBehaviour
     [Header("API Configuration")]
     [SerializeField] private string apiUrl = "";
 
-    [Tooltip("Exhibition UUID to request from the API. For now this can be hard-coded; later it can come from user selection.")]
+    [Tooltip("Exhibition UUID to request from the API. For now this can be hard-coded; later it can come from user selection. Also used as userId for cart/favourite API calls.")]
     [SerializeField] private string exhibitionId = "e459a070-3f67-4624-8d33-4dc33d1d6af0";
+
+    /// <summary>
+    /// Returns the current exhibition ID (used for API requests and as userId in cart/favourite).
+    /// </summary>
+    public string GetExhibitionId() => exhibitionId;
 
     [Tooltip("Token to be sent as a header in the API request.")]
     [SerializeField] private string token = "";
@@ -163,21 +170,33 @@ public class ArtworkManagerNew : MonoBehaviour
 
     private void Awake()
     {
+
+        Debug.Log("AWAKE " + Application.absoluteURL);
+
+
         // Use global config URL if apiUrl is not set in Inspector
         if (string.IsNullOrEmpty(apiUrl))
         {
             apiUrl = AppConfig.ExhibitionUrl;
         }
 
-        // In WebGL builds, try to extract exhibition ID from the browser URL
-
-        
-        TryExtractExhibitionIdFromUrl();
-
         // Populate displayWalls with all DisplayWall components in the scene if none are assigned.
         if (displayWalls == null || displayWalls.Count == 0)
         {
             RefreshDisplayWalls();
+        }
+    }
+
+    private void Start()
+    {
+
+        Debug.Log("START " + Application.absoluteURL);
+
+        TryExtractExhibitionIdFromUrl();
+
+        if (loadOnAwake)
+        {
+            StartCoroutine(AutoReloadAfterDelay());
         }
     }
 
@@ -188,7 +207,10 @@ public class ArtworkManagerNew : MonoBehaviour
     /// </summary>
     private void TryExtractExhibitionIdFromUrl()
     {
-        string extractedId = GetAfterExhibition();
+
+        //Debug.Log();
+
+        string extractedId = TryParseExhibitionIdFromAbsoluteUrl();
         if (!string.IsNullOrEmpty(extractedId))
         {
             Debug.Log($"ArtworkManagerNew: Extracted exhibition ID from Application.absoluteURL: {extractedId}");
@@ -202,7 +224,13 @@ public class ArtworkManagerNew : MonoBehaviour
 
     private string GetAfterExhibition()
     {
+
         string url = Application.absoluteURL;
+        absoluteURLTxt.text = url;
+
+
+
+        //string url = "https://stg.artiure.com/exhibition/dc088cf8-6521-4714-8505-f21c30cc2562";
 
         if (string.IsNullOrEmpty(url))
             return null;
@@ -218,6 +246,7 @@ public class ArtworkManagerNew : MonoBehaviour
         result = result.TrimEnd('/');
 
         absoluteURLTxt.text = result;
+
         return result;
     }
 
@@ -229,44 +258,43 @@ public class ArtworkManagerNew : MonoBehaviour
     {
         try
         {
-            absoluteURLTxt.text = Application.absoluteURL;
+            string url = Application.absoluteURL;
+            absoluteURLTxt.text = url;
 
-            string absoluteUrl = Application.absoluteURL;
-            if (string.IsNullOrEmpty(absoluteUrl))
+            if (string.IsNullOrEmpty(url))
             {
-                Debug.Log("ArtworkManagerNew: Application.absoluteURL is empty.");
+                Debug.Log("EMPTY URL OR NULL");
                 return null;
             }
 
-            Debug.Log($"ArtworkManagerNew: Application.absoluteURL = {absoluteUrl}");
+            const string key = "exhibitionId=";
 
-            // Match /exhibition/{uuid} pattern
-            var match = System.Text.RegularExpressions.Regex.Match(
-                absoluteUrl,
-                @"/exhibition/([a-zA-Z0-9-]+)"
-            );
+            int index = url.IndexOf(key);
 
-            if (match.Success && match.Groups.Count > 1)
+            if (index == -1)
             {
-                absoluteURLTxt.text = match.Groups[1].Value;
-                return match.Groups[1].Value;
+                Debug.Log("exhibitionId not found in URL");
+                return null;
             }
+
+            string result = url.Substring(index + key.Length);
+
+            // In case more params get added later (&foo=bar)
+            int ampIndex = result.IndexOf("&");
+            if (ampIndex != -1)
+                result = result.Substring(0, ampIndex);
+
+            absoluteURLTxt.text = result;
+            return result;
         }
         catch (Exception ex)
         {
-            Debug.LogWarning($"ArtworkManagerNew: Failed to parse Application.absoluteURL: {ex.Message}");
-        }
-
-        return null;
-    }
-
-    private void Start()
-    {
-        if (loadOnAwake)
-        {
-            StartCoroutine(AutoReloadAfterDelay());
+            Debug.LogWarning($"Failed to parse Application.absoluteURL: {ex.Message}");
+            return null;
         }
     }
+
+
 
     private IEnumerator AutoReloadAfterDelay()
     {
@@ -949,6 +977,44 @@ public class ArtworkManagerNew : MonoBehaviour
     }
 
     /// <summary>
+    /// Gets exhibition/artist/user info for the price-on-request API. Uses first exhibition and first artist.
+    /// userEmail/userName come from exhibition if set by getExhibitionFromId; otherwise fallback to artist email/name.
+    /// </summary>
+    public void GetPriceOnRequestInfo(out string exhibitionName, out string artistEmail, out string artistName, out string userEmail, out string userName)
+    {
+        exhibitionName = string.Empty;
+        artistEmail = string.Empty;
+        artistName = string.Empty;
+        userEmail = string.Empty;
+        userName = string.Empty;
+
+        var exhibition = GetFirstExhibition();
+        if (exhibition == null) return;
+
+        exhibitionName = exhibition.name ?? string.Empty;
+        userEmail = exhibition.userEmail ?? string.Empty;
+        userName = exhibition.userName ?? string.Empty;
+
+        var artist = FindFirstArtistFromConfig();
+        if (artist != null)
+        {
+            artistEmail = artist.email ?? string.Empty;
+            artistName = artist.fullName ?? string.Empty;
+            if (string.IsNullOrEmpty(userEmail)) userEmail = artistEmail;
+            if (string.IsNullOrEmpty(userName)) userName = artistName;
+        }
+    }
+
+    /// <summary>
+    /// Returns the first exhibition from the current config, or null.
+    /// </summary>
+    private ExhibitionConfigNew GetFirstExhibition()
+    {
+        if (currentConfig?.data == null || currentConfig.data.Count == 0) return null;
+        return currentConfig.data[0];
+    }
+
+    /// <summary>
     /// Returns all paintings placed on all walls across all exhibitions.
     /// </summary>
     public List<PaintingConfigNew> GetAllPaintings()
@@ -1222,7 +1288,7 @@ public class ArtworkManagerNew : MonoBehaviour
 
         FrameLayout instance = Instantiate(layoutPrefab, wall.transform);
         instance.transform.localPosition = Vector3.zero;
-        
+
         // Apply 180° Y rotation if rotated layout mode is enabled
         if (useRotatedLayoutMode)
         {
@@ -1690,16 +1756,16 @@ public class ArtworkManagerNew : MonoBehaviour
         {
             // Always flip texture vertically (required for correct display on 3D quads)
             downloadedTexture = FlipTextureVertically(downloadedTexture);
-            
+
             // Always store to cache so info screen can access it
             WebGLMediaCache.StoreTexture(imageUrl, downloadedTexture);
-            
+
             // Flip sprite renderer horizontally when using rotated layout mode
             if (useRotatedLayoutMode)
             {
                 frame.SetSpriteFlipX(false);
             }
-            
+
             frame.SetTexture(downloadedTexture);
             successfulDownloads++;
             Debug.Log($"ArtworkManagerNew: Successfully loaded and applied image for frame '{frame.name}'");
@@ -1733,12 +1799,12 @@ public class ArtworkManagerNew : MonoBehaviour
             Debug.Log($"Successful: {successfulDownloads}");
             Debug.Log($"Failed: {failedDownloads}");
             Debug.Log($"Success rate: {(totalImagesToDownload > 0 ? (float)successfulDownloads / totalImagesToDownload * 100f : 0f):F1}%");
-            
+
             if (failedDownloads > 0)
             {
                 Debug.LogWarning($"ArtworkManagerNew: {failedDownloads} image(s) failed to download. Check the logs above for specific URLs and errors.");
             }
-            
+
             OnAllImagesDownloaded?.Invoke();
         }
     }
@@ -1796,6 +1862,16 @@ public class ExhibitionConfigNew
     public string userId;
     public string createdAt;
     public string updatedAt;
+
+    /// <summary>
+    /// User email from getExhibitionFromId (when API provides it). Used for price-on-request.
+    /// </summary>
+    public string userEmail;
+
+    /// <summary>
+    /// User display name from getExhibitionFromId (when API provides it). Used for price-on-request.
+    /// </summary>
+    public string userName;
 
     /// <summary>
     /// Optional preview image for the exhibition (cover/thumbnail).
@@ -1893,10 +1969,12 @@ public class WallsConfigNew
 [Serializable]
 public class PaintingConfigNew
 {
+    public string _id;
     public long image_number;
     public string name;
     public string shortDescription;
     public string description;
+    public string careInstruction;
     public string slug;
     public string uuid;
     public string ratio;
@@ -1907,13 +1985,36 @@ public class PaintingConfigNew
     public List<string> regions;
     public string status;
     public List<string> style;
+    public List<string> additional;
+    public List<string> sustainability;
     public List<string> colors;
     public string medium;
+    public List<IdealForConfigNew> idealFor;
+    public bool matureContent;
+    public bool isAiGenerated;
+    public bool freeShipping;
+    public string disclaimer;
+    public bool isBestSeller;
+    public bool isFeatured;
+    public bool isLimitedEdition;
+    public bool isExclusive;
     public string baseSKU;
+    public List<object> variations;
     public List<PriceConfigNew> price;
+    public bool maintainStock;
+    public long stock;
     public List<ImageConfigNew> images;
     public List<FrameConfigNew> frames;
+    public List<MetadataConfigNew> metadata;
+    public string tier;
+    public List<ClickConfigNew> clicks;
+    public string createdAt;
+    public string updatedAt;
+    public int __v;
     public ImageConfigNew mainImage;
+    public string matchedId;
+    public int slotIndex;
+    public int i;
     public bool sold;
     public bool favourite;
     public bool cart;
@@ -1989,6 +2090,37 @@ public class ImageConfigNew
 public class FrameConfigNew
 {
     // Intentionally left minimal for now
+}
+
+/// <summary>
+/// Ideal-for entry indicating target audience/use case (e.g. { "name": "Art Collectors", "exist": true }).
+/// </summary>
+[Serializable]
+public class IdealForConfigNew
+{
+    public string name;
+    public bool exist;
+}
+
+/// <summary>
+/// Metadata entry for SEO/social meta tags (e.g. { "title": "meta-title", "description": "...", "_id": "..." }).
+/// </summary>
+[Serializable]
+public class MetadataConfigNew
+{
+    public string title;
+    public string description;
+    public string _id;
+}
+
+/// <summary>
+/// Click tracking entry (e.g. { "count": 4, "region": "IN" }).
+/// </summary>
+[Serializable]
+public class ClickConfigNew
+{
+    public int count;
+    public string region;
 }
 
 #endregion

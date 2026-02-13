@@ -48,9 +48,16 @@ public class InformationScreenUiManager : MonoBehaviour
     [Tooltip("Button used to toggle add/remove favourite for the current painting.")]
     [SerializeField] private Button addToFavorite;
 
-    [Header("API Manager")]
+    [Header("Price on Request")]
+    [Tooltip("Shown and enabled when the current painting has priceOnRequest true. Sends inquiry to sendPriceOnRequest API.")]
+    [SerializeField] private Button priceOnRequestButton;
+
+    [Header("API Manager / Data")]
     [Tooltip("Reference to the APIManager that handles cart and favourite API calls.")]
     [SerializeField] private APIManager apiManager;
+
+    [Tooltip("Optional. Used for price-on-request (exhibition/artist/user info). Auto-found if null.")]
+    [SerializeField] private ArtworkManagerNew artworkManager;
 
     [Header("UI Bindings")]
     [Tooltip("Main artwork image UI element (e.g., on the information panel).")]
@@ -83,10 +90,14 @@ public class InformationScreenUiManager : MonoBehaviour
     {
         RegisterInstanceForPlatform();
 
-        // Resolve APIManager automatically if not wired in the Inspector.
+        // Resolve APIManager and ArtworkManager automatically if not wired in the Inspector.
         if (apiManager == null)
         {
             apiManager = FindFirstObjectByType<APIManager>();
+        }
+        if (artworkManager == null)
+        {
+            artworkManager = FindFirstObjectByType<ArtworkManagerNew>();
         }
 
         // Wire up button listeners for cart / favourite toggles.
@@ -98,6 +109,11 @@ public class InformationScreenUiManager : MonoBehaviour
         if (addToFavorite != null)
         {
             addToFavorite.onClick.AddListener(OnAddToFavoriteButtonClicked);
+        }
+
+        if (priceOnRequestButton != null)
+        {
+            priceOnRequestButton.onClick.AddListener(OnPriceOnRequestButtonClicked);
         }
     }
 
@@ -123,6 +139,11 @@ public class InformationScreenUiManager : MonoBehaviour
         if (addToFavorite != null)
         {
             addToFavorite.onClick.RemoveListener(OnAddToFavoriteButtonClicked);
+        }
+
+        if (priceOnRequestButton != null)
+        {
+            priceOnRequestButton.onClick.RemoveListener(OnPriceOnRequestButtonClicked);
         }
     }
 
@@ -232,6 +253,11 @@ public class InformationScreenUiManager : MonoBehaviour
         }
 
         _currentPainting = painting;
+
+        // Sync cart/favourite flags from API response (same painting data used for info panel)
+        isAddedToCart = painting != null && painting.cart;
+        isAddedToFavorite = painting != null && painting.favourite;
+
         UpdateUI();
 
         if (isSecondClickOnSamePainting)
@@ -249,8 +275,8 @@ public class InformationScreenUiManager : MonoBehaviour
     }
 
     /// <summary>
-    /// Called when the Add to Cart button is pressed. Toggles add/remove cart
-    /// based on the current isAddedToCart flag.
+    /// Called when the Add to Cart button is pressed. Sends the current painting to add/remove
+    /// from cart; on success, updates the local flag and ActiveChild visibility.
     /// </summary>
     private void OnAddToCartButtonClicked()
     {
@@ -260,21 +286,41 @@ public class InformationScreenUiManager : MonoBehaviour
             return;
         }
 
+        if (_currentPainting == null)
+        {
+            Debug.LogWarning("InformationScreenUiManager: No painting selected; cannot modify cart.");
+            return;
+        }
+
+        int selectedSizeIndex = GetSelectedSizeIndex();
+
         if (!isAddedToCart)
         {
-            apiManager.AddToCart();
-            isAddedToCart = true;
+            apiManager.AddToCart(_currentPainting, selectedSizeIndex, (success) =>
+            {
+                if (success)
+                {
+                    isAddedToCart = true;
+                    UpdateCartFavoriteButtonVisibility();
+                }
+            });
         }
         else
         {
-            apiManager.RemoveFromCart();
-            isAddedToCart = false;
+            apiManager.RemoveFromCart(_currentPainting, selectedSizeIndex, (success) =>
+            {
+                if (success)
+                {
+                    isAddedToCart = false;
+                    UpdateCartFavoriteButtonVisibility();
+                }
+            });
         }
     }
 
     /// <summary>
-    /// Called when the Add to Favourite button is pressed. Toggles add/remove
-    /// favourite based on the current isAddedToFavorite flag.
+    /// Called when the Add to Favourite button is pressed. Sends the current painting to add/remove
+    /// from favourites; on success, updates the local flag and ActiveChild visibility.
     /// </summary>
     private void OnAddToFavoriteButtonClicked()
     {
@@ -284,15 +330,104 @@ public class InformationScreenUiManager : MonoBehaviour
             return;
         }
 
+        if (_currentPainting == null)
+        {
+            Debug.LogWarning("InformationScreenUiManager: No painting selected; cannot modify favourite.");
+            return;
+        }
+
+        int selectedSizeIndex = GetSelectedSizeIndex();
+
         if (!isAddedToFavorite)
         {
-            apiManager.AddToFavourite();
-            isAddedToFavorite = true;
+            apiManager.AddToFavourite(_currentPainting, selectedSizeIndex, (success) =>
+            {
+                if (success)
+                {
+                    isAddedToFavorite = true;
+                    UpdateCartFavoriteButtonVisibility();
+                }
+            });
         }
         else
         {
-            apiManager.RemoveFromFavourite();
-            isAddedToFavorite = false;
+            apiManager.RemoveFromFavourite(_currentPainting, selectedSizeIndex, (success) =>
+            {
+                if (success)
+                {
+                    isAddedToFavorite = false;
+                    UpdateCartFavoriteButtonVisibility();
+                }
+            });
+        }
+    }
+
+    /// <summary>
+    /// Returns the current sizes dropdown selection index (matches _currentPainting.price index).
+    /// Returns 0 if dropdown is not assigned or has no options.
+    /// </summary>
+    private int GetSelectedSizeIndex()
+    {
+        if (sizesDropdown == null) return 0;
+        if (sizesDropdown.options == null || sizesDropdown.options.Count == 0) return 0;
+        int value = sizesDropdown.value;
+        if (value < 0) return 0;
+        if (value >= sizesDropdown.options.Count) return sizesDropdown.options.Count - 1;
+        return value;
+    }
+
+    /// <summary>
+    /// Called when the Price on Request button is pressed. Sends artist/user/artwork/exhibition data to sendPriceOnRequest API.
+    /// </summary>
+    private void OnPriceOnRequestButtonClicked()
+    {
+        if (apiManager == null)
+        {
+            Debug.LogWarning("InformationScreenUiManager: APIManager not set; cannot send price-on-request.");
+            return;
+        }
+        if (_currentPainting == null)
+        {
+            Debug.LogWarning("InformationScreenUiManager: No painting selected; cannot send price-on-request.");
+            return;
+        }
+
+        artworkManager ??= FindFirstObjectByType<ArtworkManagerNew>();
+        artworkManager.GetPriceOnRequestInfo(out string exhibitionName, out string artistEmail, out string artistName, out string userEmail, out string userName);
+
+        string artworkTitle = !string.IsNullOrEmpty(_currentPainting.name) ? _currentPainting.name : (_currentPainting.slug ?? string.Empty);
+
+        apiManager.SendPriceOnRequest(artistEmail, artistName, userEmail, artworkTitle, exhibitionName, (success) =>
+        {
+            if (success)
+                Debug.Log("InformationScreenUiManager: Price-on-request sent successfully.");
+            else
+                Debug.LogWarning("InformationScreenUiManager: Price-on-request failed.");
+        });
+    }
+
+    /// <summary>
+    /// Updates the "Active" child visibility on cart and favourite buttons to match
+    /// isAddedToCart and isAddedToFavorite (driven by API response when panel opens).
+    /// </summary>
+    private void UpdateCartFavoriteButtonVisibility()
+    {
+        if (addToCart != null)
+        {
+            Transform activeChild = addToCart.transform.Find("Active");
+            if (activeChild != null)
+            {
+                activeChild.gameObject.SetActive(isAddedToCart);
+            }
+        }
+
+        if (addToFavorite != null)
+        {
+            Transform activeChild = addToFavorite.transform.Find("Active");
+            if (activeChild != null)
+            {
+                activeChild.gameObject.SetActive(isAddedToFavorite);
+            }
         }
     }
 
@@ -355,6 +490,17 @@ public class InformationScreenUiManager : MonoBehaviour
             }
         }
 
+        // Cart / Favourite button visuals from API flags
+        UpdateCartFavoriteButtonVisibility();
+
+        // Price on Request button: show and enable only when this artwork has priceOnRequest
+        if (priceOnRequestButton != null)
+        {
+            bool showPriceOnRequest = _currentPainting.priceOnRequest;
+            priceOnRequestButton.gameObject.SetActive(showPriceOnRequest);
+            priceOnRequestButton.interactable = showPriceOnRequest;
+        }
+
         // Sizes dropdown from price list
         if (sizesDropdown != null)
         {
@@ -399,6 +545,16 @@ public class InformationScreenUiManager : MonoBehaviour
         if (sizesDropdown != null)
         {
             sizesDropdown.ClearOptions();
+        }
+
+        // Reset cart/favourite visuals when no painting is selected
+        isAddedToCart = false;
+        isAddedToFavorite = false;
+        UpdateCartFavoriteButtonVisibility();
+
+        if (priceOnRequestButton != null)
+        {
+            priceOnRequestButton.gameObject.SetActive(false);
         }
 
         HideInfoObjects();
